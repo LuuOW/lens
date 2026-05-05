@@ -611,13 +611,20 @@ async function routeAndOrbit() {
 
 function spawnOrbit(skills) {
   clearOrbit();
+  // /api/orbital-route nests classification + uses route_score; FALLBACK_SKILLS
+  // is flat with score in 0..1. Read both. route_score is unbounded (≈0..200+),
+  // so normalize against the batch max when it overflows the 0..1 visual range.
+  const rawScores = skills.map(s => +s.route_score || +s.score || +s.match || 0);
+  const maxRaw = Math.max(0.0001, ...rawScores);
+  const needsNormalize = maxRaw > 1.5;
   skills.forEach((raw, i) => {
+    const rawScore = rawScores[i];
     const sk = {
-      id: raw.id || `s-${i}`,
-      name: raw.name || raw.label || `skill-${i}`,
-      class: raw.class || raw.cls || 'planet',          // <-- preserve the celestial class
-      score: raw.score ?? raw.match ?? 0.5,
-      system: raw.system || raw.system_id || raw.provider || '',
+      id: raw.id || raw.slug || `s-${i}`,
+      name: raw.name || raw.slug || raw.label || `skill-${i}`,
+      class: raw.classification?.class || raw.class || raw.cls || 'planet',
+      score: needsNormalize ? rawScore / maxRaw : rawScore,
+      system: raw.classification?.star_system || raw.system || raw.system_id || raw.provider || '',
       description: raw.description || raw.summary || raw.body || '',
     };
     const planet = makePlanet(sk, i, skills.length);
