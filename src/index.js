@@ -56,10 +56,59 @@ const NAV_W      = 0.70;
 const NAV_H      = 0.13;
 
 const FALLBACK_SKILLS = [
-  { id: 'orbital-route', name: 'orbital-route', score: 0.91, system: 'meridian-mcp', description: 'Route a free-form task to compatible skills via Llama-3.3-70B classification.' },
-  { id: 'vision-snap',   name: 'vision-snap',   score: 0.74, system: 'lens',         description: 'Capture the current scene and run a VLM query in-headset.' },
-  { id: 'skill-orbit',   name: 'skill-orbit',   score: 0.62, system: 'meridian-mcp', description: 'Materialise matched skills as orbital planets around the user.' },
+  { id: 'orbital-route', name: 'orbital-route', class: 'planet',    score: 0.91, system: 'meridian-mcp', description: 'Route a free-form task to compatible skills via Llama-3.3-70B classification.' },
+  { id: 'vision-snap',   name: 'vision-snap',   class: 'asteroid',  score: 0.74, system: 'lens',         description: 'Capture the current scene and run a VLM query in-headset.' },
+  { id: 'skill-orbit',   name: 'skill-orbit',   class: 'trojan',    score: 0.62, system: 'meridian-mcp', description: 'Materialise matched skills as orbital planets around the user.' },
+  { id: 'comet-router',  name: 'comet-router',  class: 'comet',     score: 0.55, system: 'meridian-mcp', description: 'Long-period high-eccentricity router for rare-task coverage.' },
+  { id: 'moon-cache',    name: 'moon-cache',    class: 'moon',      score: 0.48, system: 'lens',         description: 'Lightweight skill that satellites a parent skill (here: orbits the planet).' },
+  { id: 'irregular-fx',  name: 'irregular-fx',  class: 'irregular', score: 0.41, system: 'meridian-mcp', description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
 ];
+
+// Orbital mechanics — each celestial class the meridian skill router emits gets a distinct
+// orbital character so the visualization shows the difference instead of N identical circles.
+// All orbits are centered at (0, ORBIT_Y, 0) (the user). y-axis is "up" in three.js.
+//                a (m) | e    | i (rad) | ω (rad)   | retrograde
+const ORBITAL_ELEMENTS = {
+  planet:    { a: 2.0,  e: 0.05, i: 0.08,  omega: 0.0,         retrograde: false },
+  moon:      { a: 0.7,  e: 0.10, i: 0.50,  omega: 0.0,         retrograde: false },
+  trojan:    { a: 2.0,  e: 0.02, i: 0.08,  omega: Math.PI/3,   retrograde: false },  // 60° offset vs planet (Lagrange L4)
+  asteroid:  { a: 1.3,  e: 0.20, i: 0.15,  omega: 0.0,         retrograde: false },
+  comet:     { a: 3.2,  e: 0.78, i: 0.45,  omega: 0.0,         retrograde: false },
+  irregular: { a: 2.5,  e: 0.35, i: 1.20,  omega: 0.0,         retrograde: true  },
+};
+// Kepler's 3rd law: T = T_UNIT * a^1.5 (s). Tuned so a planet (a=2) orbits in ~28 s.
+const KEPLER_T_UNIT = 28 / Math.pow(2.0, 1.5);
+
+function classElements(cls) {
+  return ORBITAL_ELEMENTS[cls] || ORBITAL_ELEMENTS.planet;
+}
+function classPeriod(elements) {
+  return KEPLER_T_UNIT * Math.pow(elements.a, 1.5);
+}
+function solveKepler(M, e) {
+  // Newton-Raphson for E - e*sin(E) = M. 4 iterations cover e<0.95 to <1e-6 rad.
+  let E = M + e * Math.sin(M);
+  for (let k = 0; k < 4; k++) {
+    E = E - (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
+  }
+  return E;
+}
+function keplerPosition(elements, t, M0) {
+  const { a, e, i, omega, retrograde } = elements;
+  const T = classPeriod(elements);
+  const M = (M0 || 0) + (retrograde ? -1 : 1) * 2 * Math.PI * (t / T);
+  const E = solveKepler(M, e);
+  // Perifocal frame (periapsis on +x):
+  const x_p = a * (Math.cos(E) - e);
+  const y_p = a * Math.sqrt(Math.max(0, 1 - e * e)) * Math.sin(E);
+  // ω rotates within the orbital plane:
+  const cw = Math.cos(omega), sw = Math.sin(omega);
+  const x_op = x_p * cw - y_p * sw;
+  const y_op = x_p * sw + y_p * cw;
+  // Inclination tilts the orbital plane around its line of nodes (here, world +x axis):
+  const ci = Math.cos(i), si = Math.sin(i);
+  return { x: x_op, y: y_op * si, z: y_op * ci };
+}
 
 const ROUTE_ENDPOINT = 'https://ask-meridian.uk/api/orbital-route';
 
@@ -96,6 +145,8 @@ const state = {
   answer:   null,        // { group, title, body, meta }
   route:    null,        // { group, panel, text }
   orbit:    [],          // planet meshes
+  orbitRings: [],        // per-planet ellipse Lines (visible orbit traces)
+  physicsPanel: null,    // right-side hover info card
   detail:   null,        // { group, closeMesh }
   selected: null,
   full:     '',
@@ -214,10 +265,10 @@ function makeRouteButton() {
 }
 
 function makePlanet(skill, i, n) {
-  const ang = (i / n) * Math.PI * 2;
   const score = Math.max(0, Math.min(1, +skill.score || 0.5));
-  const radius = 0.07 + score * 0.10;
-  const y = ORBIT_Y + (score - 0.5) * 0.5;
+  const cls   = skill.class || 'planet';
+  const elements = classElements(cls);
+  const radius = 0.06 + score * 0.08;     // sphere visual size
   const color = COL_PLANETS[i % COL_PLANETS.length];
 
   const mesh = new THREE.Mesh(
@@ -227,27 +278,98 @@ function makePlanet(skill, i, n) {
       emissive: color, emissiveIntensity: 0.25,
     }),
   );
-  mesh.position.set(Math.cos(ang) * ORBIT_RADIUS, y, Math.sin(ang) * ORBIT_RADIUS);
-  mesh.userData = {
-    kind: 'planet', skill, ang, radius, y,
-    spin: 0.18 + Math.random() * 0.10,
-    color,
-  };
-  // Use raycaster intersectObjects(planet) — Mesh works fine even though
-  // it's not a flat panel. Adding the planet itself to state.panels.
 
-  // Static label that always faces origin (planet position varies per frame
-  // so we'll re-orient the label in onFrame; planets themselves don't need
-  // to face the user since they're round).
-  const label = makeText(`${skill.name}  ·  ${(score * 100).toFixed(0)}%`, {
-    size: 0.035, color: 0xffffff,
-  });
+  // Random initial mean anomaly so co-class planets don't bunch at periapsis.
+  const M0 = Math.random() * Math.PI * 2;
+  const p0 = keplerPosition(elements, 0, M0);
+  mesh.position.set(p0.x, p0.y + ORBIT_Y, p0.z);
+  mesh.userData = {
+    kind: 'planet', skill, elements, M0, color, radius, cls,
+  };
+
+  const label = makeText(`${skill.name}  ·  ${cls}`, { size: 0.032, color: 0xffffff });
   label.position.y = radius + 0.05;
   label.sync();
   mesh.add(label);
   mesh.userData.label = label;
 
   return mesh;
+}
+
+function makeOrbitRing(elements, color = 0x9bb6ea) {
+  // Sample 96 mean-anomaly steps and project through the same Kepler->3D pipeline
+  // as the planet itself, so the rendered ring exactly matches the planet's path.
+  const N = 96;
+  const pts = [];
+  for (let k = 0; k <= N; k++) {
+    const M = 2 * Math.PI * k / N;
+    const E = solveKepler(M, elements.e);
+    const x_p = elements.a * (Math.cos(E) - elements.e);
+    const y_p = elements.a * Math.sqrt(Math.max(0, 1 - elements.e * elements.e)) * Math.sin(E);
+    const cw = Math.cos(elements.omega), sw = Math.sin(elements.omega);
+    const x_op = x_p * cw - y_p * sw;
+    const y_op = x_p * sw + y_p * cw;
+    const ci = Math.cos(elements.i), si = Math.sin(elements.i);
+    pts.push(new THREE.Vector3(x_op, y_op * si + ORBIT_Y, y_op * ci));
+  }
+  const geom = new THREE.BufferGeometry().setFromPoints(pts);
+  return new THREE.Line(geom, new THREE.LineBasicMaterial({
+    color, transparent: true, opacity: 0.22,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+}
+
+function makePhysicsPanel() {
+  // Static panel pinned on the user's right at eye height. Hidden until a
+  // planet is hovered. Mirror geometry of the in-VR nav strip on the left.
+  const group = new THREE.Group();
+  const w = 0.70, h = 0.40;
+  group.position.set(1.55, 1.85, -1.0);
+
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(w, h),
+    frontMaterial(COL_PANEL, 0.94),
+  );
+  group.add(panel);
+
+  const title = makeText('', { size: 0.040, color: COL_TEXT_H, anchorX: 'left', anchorY: 'top' });
+  title.position.set(-w / 2 + 0.04, h / 2 - 0.04, 0.002);
+  title.sync(); group.add(title);
+
+  const meta = makeText('', { size: 0.026, color: 0x9bb6ea, anchorX: 'left', anchorY: 'top' });
+  meta.position.set(-w / 2 + 0.04, h / 2 - 0.10, 0.002);
+  meta.sync(); group.add(meta);
+
+  const body = makeText('', { size: 0.028, color: 0xe9eef7, anchorX: 'left', anchorY: 'top', maxWidth: w - 0.08 });
+  body.position.set(-w / 2 + 0.04, h / 2 - 0.16, 0.002);
+  body.sync(); group.add(body);
+
+  group.lookAt(0, 1.85, 0);
+  group.visible = false;
+  group.userData = { kind: 'physics-group', title, meta, body };
+  return group;
+}
+
+function updatePhysicsPanel(skill, elements) {
+  const panel = state.physicsPanel;
+  if (!panel) return;
+  const cls = skill.class || 'planet';
+  const T = classPeriod(elements);
+  panel.userData.title.text = skill.name;
+  panel.userData.title.sync();
+  panel.userData.meta.text = `class: ${cls} · score ${(skill.score * 100).toFixed(0)}%`;
+  panel.userData.meta.sync();
+  panel.userData.body.text =
+    `a (semi-major)   ${elements.a.toFixed(2)} m\n` +
+    `e (eccentricity) ${elements.e.toFixed(2)}\n` +
+    `i (inclination)  ${(elements.i * 180 / Math.PI).toFixed(0)}°\n` +
+    `T (period)       ${T.toFixed(0)} s` +
+    (elements.retrograde ? '\nretrograde' : '');
+  panel.userData.body.sync();
+  panel.visible = true;
+}
+function hidePhysicsPanel() {
+  if (state.physicsPanel) state.physicsPanel.visible = false;
 }
 
 function makeDetailCard(skill) {
@@ -404,6 +526,10 @@ function setupScene({ scene, renderer }) {
     scene.add(link);
     if (!item.current) state.panels.push(link.userData.panel);
   });
+
+  // Physics panel — pinned on the right, hidden until a planet is hovered.
+  state.physicsPanel = makePhysicsPanel();
+  scene.add(state.physicsPanel);
 }
 
 // ── Phase transitions ───────────────────────────────────────────────────
@@ -489,6 +615,7 @@ function spawnOrbit(skills) {
     const sk = {
       id: raw.id || `s-${i}`,
       name: raw.name || raw.label || `skill-${i}`,
+      class: raw.class || raw.cls || 'planet',          // <-- preserve the celestial class
       score: raw.score ?? raw.match ?? 0.5,
       system: raw.system || raw.system_id || raw.provider || '',
       description: raw.description || raw.summary || raw.body || '',
@@ -497,9 +624,15 @@ function spawnOrbit(skills) {
     state.scene.add(planet);
     state.orbit.push(planet);
     state.panels.push(planet);
+
+    // Per-planet orbit ring — colour matches the planet so you can tell which
+    // ring belongs to which when several share an inclination.
+    const ring = makeOrbitRing(planet.userData.elements, planet.userData.color);
+    state.scene.add(ring);
+    state.orbitRings.push(ring);
   });
   state.phase = 'orbit';
-  setHint('aim a planet to inspect', COL_TEXT);
+  setHint('aim a planet to inspect orbital elements', COL_TEXT);
 }
 
 function clearOrbit() {
@@ -509,6 +642,9 @@ function clearOrbit() {
     if (idx >= 0) state.panels.splice(idx, 1);
   });
   state.orbit = [];
+  state.orbitRings.forEach((r) => state.scene.remove(r));
+  state.orbitRings = [];
+  hidePhysicsPanel();
 }
 
 function showDetail(skill) {
@@ -596,6 +732,9 @@ function setHover(panel) {
     } else if (m.userData.kind === 'planet') {
       m.material.emissiveIntensity = 0.25;
       m.scale.setScalar(1);
+      // Hide physics panel when no planet is hovered. Re-shown by the
+      // setHover branch below if a different planet picks up the hover.
+      hidePhysicsPanel();
     } else if (m.userData.kind === 'navlink') {
       m.material.color.setHex(m.userData.baseColor);
     }
@@ -615,6 +754,7 @@ function setHover(panel) {
     } else if (panel.userData.kind === 'planet') {
       panel.material.emissiveIntensity = 0.5;
       panel.scale.setScalar(1.15);
+      updatePhysicsPanel(panel.userData.skill, panel.userData.elements);
     } else if (panel.userData.kind === 'navlink') {
       panel.material.color.setHex(COL_PANEL_C);
     }
@@ -644,14 +784,15 @@ function onFrame(delta, _time, { controllers, camera }) {
   // Stream mock reply if currently thinking
   streamTick();
 
-  // Orbit motion + label re-face (planet has a label child; keep it
-  // facing the user so the score is readable from any orbit position.)
+  // Per-class Kepler motion. Each planet's mean anomaly advances at its own
+  // (Kepler's-3rd-law) rate; we solve for the eccentric anomaly each frame
+  // and project to 3D through the perifocal → inclined frame.
   if (state.orbit.length) {
     const cam = camera.getWorldPosition(_o);
+    const t = performance.now() / 1000;
     state.orbit.forEach((p) => {
-      p.userData.ang += p.userData.spin * delta;
-      p.position.x = Math.cos(p.userData.ang) * ORBIT_RADIUS;
-      p.position.z = Math.sin(p.userData.ang) * ORBIT_RADIUS;
+      const pos = keplerPosition(p.userData.elements, t, p.userData.M0);
+      p.position.set(pos.x, pos.y + ORBIT_Y, pos.z);
       p.userData.label?.lookAt(cam);
     });
   }
