@@ -45,20 +45,23 @@ jobs:
             "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts/lens-proxy" \
             | python3 -c "import json,sys; d=json.load(sys.stdin); print('deploy success:', d.get('success'))"
 
-      - name: Smoke test
+      - name: Verify deploy (via CF API — edge is firewalled to GH Actions IPs)
+        env:
+          CF_EMAIL:   ${{ secrets.CF_EMAIL }}
+          CF_KEY:     ${{ secrets.CF_KEY }}
+          CF_ACCOUNT: ${{ secrets.CF_ACCOUNT }}
         run: |
-          # Cloudflare 403s the default curl/x.x UA from GH Actions IP ranges.
-          # Send a Chrome-like UA so the smoke check actually reaches the edge.
-          UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
-          SHORT="${GITHUB_SHA:0:7}"
-          for i in 1 2 3 4 5; do
-            if curl -fsS -A "$UA" "https://lens.ask-meridian.uk/healthz" > /tmp/h.json; then
-              cat /tmp/h.json
-              python3 -c "import json,sys; d=json.load(open('/tmp/h.json')); want=sys.argv[1]; got=d.get('build',{}).get('commit'); assert got == want, f'commit mismatch: edge serves {got}, expected {want}'" "$SHORT"
-              exit 0
-            fi
-            echo "edge not yet serving (curl exit $?), retry $i/5"
-            sleep 4
-          done
-          echo "::error::lens.ask-meridian.uk did not serve the new build in time"
-          exit 1
+          curl -fsS -H "X-Auth-Email: $CF_EMAIL" -H "X-Auth-Key: $CF_KEY" \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts" \
+            | python3 -c "
+import json, os, sys, datetime as dt
+d = json.load(sys.stdin)
+script = next((s for s in d.get('result', []) if s['id'] == 'lens-proxy'), None)
+assert script, 'lens-proxy script not found'
+modified = script.get('modified_on')
+age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(modified)).total_seconds()
+print(f'lens-proxy modified_on={modified}  ({age:.0f}s ago)')
+assert age < 300, f'modified_on is {age:.0f}s old; this run did not deploy a fresh script'
+"
+          # End-user smoke (browser → edge) is run manually; CF firewall blocks
+          # GH Actions IPs unconditionally on this zone.
