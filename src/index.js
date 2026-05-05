@@ -38,6 +38,23 @@ const MOCK_ANSWERS = {
   skills:   'Spatial UI navigation, ray-pick interaction, voice-to-prompt, controller haptics.',
 };
 
+// Cross-property nav, mirrored from the DOM burger menu so you can move
+// between miniapp / vision-lab / photon / lens without leaving the headset.
+// Selecting one ends the XR session (via `session.end()` if EXIT, otherwise
+// implicitly via `window.location.href`) and the browser navigates.
+const NAV_LINKS = [
+  { label: '🛰️ Try it',     url: 'https://ask-meridian.uk/miniapp/' },
+  { label: '🔭 Vision Lab', url: 'https://ask-meridian.uk/miniapp/vision-lab/' },
+  { label: '⚛︎ Photon',     url: 'https://photon.ask-meridian.uk' },
+  { label: '◎ Lens',         url: null,        current: true },
+  { label: '✕ Exit VR',     url: '__exit__' },
+];
+const NAV_X      = -1.55;
+const NAV_Y_TOP  = 1.85;
+const NAV_GAP    = 0.16;
+const NAV_W      = 0.70;
+const NAV_H      = 0.13;
+
 const FALLBACK_SKILLS = [
   { id: 'orbital-route', name: 'orbital-route', score: 0.91, system: 'meridian-mcp', description: 'Route a free-form task to compatible skills via Llama-3.3-70B classification.' },
   { id: 'vision-snap',   name: 'vision-snap',   score: 0.74, system: 'lens',         description: 'Capture the current scene and run a VLM query in-headset.' },
@@ -284,6 +301,36 @@ function makeDetailCard(skill) {
   return group;
 }
 
+function makeNavLink(item, i) {
+  const group = new THREE.Group();
+  group.position.set(NAV_X, NAV_Y_TOP - i * NAV_GAP, -1.0);
+
+  const isCurrent  = !!item.current;
+  const isExit     = item.url === '__exit__';
+  const baseColor  = isCurrent ? 0x2a2240 : (isExit ? 0x401f1f : 0x1f2740);
+  const labelColor = isCurrent ? 0xc9d4ec : (isExit ? 0xf57b8a : COL_TEXT);
+
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(NAV_W, NAV_H),
+    frontMaterial(baseColor, 0.92),
+  );
+  panel.userData.kind = 'navlink';
+  panel.userData.url  = item.url;
+  panel.userData.current = isCurrent;
+  panel.userData.baseColor = baseColor;
+  group.add(panel);
+
+  const text = makeText(item.label, { size: 0.05, color: labelColor });
+  text.position.z = 0.002;
+  text.sync();
+  group.add(text);
+
+  // Static one-shot orient toward origin — same rule as the cards.
+  group.lookAt(0, group.position.y, 0);
+  group.userData = { kind: 'navlink-group', panel, text };
+  return group;
+}
+
 function makeLaser() {
   const geom = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
@@ -295,8 +342,9 @@ function makeLaser() {
 }
 
 // ── Setup ───────────────────────────────────────────────────────────────
-function setupScene({ scene }) {
+function setupScene({ scene, renderer }) {
   state.scene = scene;
+  state.renderer = renderer;
   scene.background = new THREE.Color(COL_BG);
   scene.add(new THREE.AmbientLight(0x202838, 1.0));
   const key = new THREE.DirectionalLight(0xffffff, 0.7);
@@ -347,6 +395,15 @@ function setupScene({ scene }) {
   state.hint.lookAt(0, 0.95, 0);
   state.hint.sync();
   scene.add(state.hint);
+
+  // In-VR nav strip on the user's left so you can hop between properties
+  // without taking the headset off. Skipped from the raycast list for the
+  // current entry (no point clicking yourself).
+  NAV_LINKS.forEach((item, i) => {
+    const link = makeNavLink(item, i);
+    scene.add(link);
+    if (!item.current) state.panels.push(link.userData.panel);
+  });
 }
 
 // ── Phase transitions ───────────────────────────────────────────────────
@@ -506,6 +563,17 @@ function handleClick(panel) {
     closeDetail();
     state.phase = 'orbit';
     setHint('aim a planet to inspect', COL_TEXT);
+  } else if (k === 'navlink') {
+    const url = panel.userData.url;
+    if (url === '__exit__') {
+      // End the XR session so the DOM gate (and the burger menu) reappear.
+      state.renderer?.xr?.getSession?.()?.end?.();
+    } else if (url) {
+      // Cross-property nav: ending the session first prevents Quest from
+      // showing a stuck black frame as the new page loads.
+      try { state.renderer?.xr?.getSession?.()?.end?.(); } catch { /* fine */ }
+      window.location.href = url;
+    }
   }
 }
 
@@ -528,6 +596,8 @@ function setHover(panel) {
     } else if (m.userData.kind === 'planet') {
       m.material.emissiveIntensity = 0.25;
       m.scale.setScalar(1);
+    } else if (m.userData.kind === 'navlink') {
+      m.material.color.setHex(m.userData.baseColor);
     }
   }
 
@@ -545,6 +615,8 @@ function setHover(panel) {
     } else if (panel.userData.kind === 'planet') {
       panel.material.emissiveIntensity = 0.5;
       panel.scale.setScalar(1.15);
+    } else if (panel.userData.kind === 'navlink') {
+      panel.material.color.setHex(COL_PANEL_C);
     }
   }
   state.hovered = panel;
