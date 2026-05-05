@@ -1,29 +1,12 @@
 {
-	"name": "webxr-first-steps",
-	"private": true,
-	"devDependencies": {
-		"@types/three": "0.165.0",
-		"copy-webpack-plugin": "12.0.2",
-		"eslint": "9.10.0",
-		"eslint-config-prettier": "9.1.0",
-		"eslint-webpack-plugin": "4.2.0",
-		"html-webpack-plugin": "5.6.0",
-		"prettier": "3.3.3",
-		"webpack": "5.94.0",
-		"webpack-cli": "5.1.4",
-		"webpack-dev-server": "5.1.0"
-	},
-	"scripts": {
-		"build": "webpack",
-		"dev": "webpack serve",
-		"format": "prettier --write ./src/**/*"
-	},
-	"dependencies": {
-		"@iwer/devui": "0.1.1",
-		"gamepad-wrapper": "1.3.4",
-		"gsap": "3.12.5",
-		"iwer": "1.0.4",
-		"three": "0.165.0",
-		"troika-three-text": "0.49.1"
-	}
+  "name": "lens",
+  "version": "0.2.0",
+  "private": true,
+  "description": "lens.ask-meridian.uk — WebXR Vision Lab. NO bundler, NO npm deps on this VM. The site is plain ES modules + an importmap that resolves to esm.sh at runtime. See src/index.html.",
+  "_warning": "DO NOT run npm install here. The 1 GB meridian-vm cannot bundle three.js. Edit src/, restart lens.service, ship.",
+  "scripts": {
+    "lens:status":  "systemctl status lens.service --no-pager",
+    "lens:restart": "systemctl restart lens.service",
+    "lens:logs":    "journalctl -u lens.service -f"
+  }
 }

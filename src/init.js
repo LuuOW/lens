@@ -143,5 +143,8 @@ export async function init(setupScene = () => {}, onFrame = () => {}) {
 
 	renderer.setAnimationLoop(animate);
 
-	document.body.appendChild(VRButton.createButton(renderer));
+	// Caller decides when to surface the VR entry button — the gate UI
+	// in index.js wants it gated on capability checks + model download.
+	globals.vrButton = VRButton.createButton(renderer);
+	return globals;
 }

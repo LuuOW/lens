@@ -1,48 +1,228 @@
-<!-- 
-  Copyright (c) Meta Platforms, Inc. and affiliates.
-
-  This source code is licensed under the MIT license found in the
-  LICENSE file in the root directory of this source tree.
--->
 <!doctype html>
 <html lang="en">
-	<head>
-		<title>WebXR First Steps</title>
-		<meta charset="utf-8" />
-		<meta
-			name="viewport"
-			content="width=device-width, initial-scale=1.0, user-scalable=no"
-		/>
-	</head>
-	<body style="margin: 0">
-		<div
-			style="
-				position: fixed;
-				top: 10px;
-				width: 100vw;
-				display: flex;
-				flex-direction: column;
-				justify-content: center;
-				align-items: center;
-				color: white;
-			"
-		>
-			<div>
-				WebXR First Steps Tutorial -&nbsp;
-				<a href="https://github.com/meta-quest/webxr-first-steps">GitHub</a
-				>&nbsp;|&nbsp;<a
-					href="https://raw.githubusercontent.com/meta-quest/webxr-first-steps/main/LICENSE"
-					>MIT License</a
-				>
-			</div>
+  <head>
+    <title>Lens — Meridian</title>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0a0d14" />
+    <meta
+      name="description"
+      content="Vision Lab in VR — point, snap, and let an in-headset VLM answer."
+    />
 
-			<div>
-				Copyright © Meta Platforms, Inc |
+    <!--
+      No bundler. The VM that hosts this site is a 1 GB notepad — bundling
+      Three.js with webpack here would (and did) thrash swap. Quest's browser
+      and any modern desktop browser speak ES modules natively, so we just
+      ship import maps and let the browser fetch from esm.sh on demand.
+    -->
+    <!--
+      Why two CDNs:
+       * esm.sh — wraps non-trivially-CommonJS packages (iwer, gsap,
+         transformers) into clean ESM. But it inlines `import 'three'`
+         inside any sub-module by default, which would give us TWO copies
+         of three (one for our scripts, one re-bundled into each addon)
+         and break instanceof checks.
+       * jsdelivr — serves the raw npm files. three's examples/jsm/*.js
+         do a bare `import * as THREE from 'three';` which the browser
+         then resolves through THIS import map, deduping cleanly to the
+         esm.sh-served three above.
+       * external=… — tells esm.sh "don't bundle this dep, let the import
+         map handle it" so troika and devui share our three / iwer.
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three":                          "https://esm.sh/three@0.165.0",
+          "three/addons/":                  "https://cdn.jsdelivr.net/npm/three@0.165.0/examples/jsm/",
+          "troika-three-text":              "https://esm.sh/troika-three-text@0.49.1?external=three",
+          "gsap":                           "https://esm.sh/gsap@3.12.5",
+          "gamepad-wrapper":                "https://esm.sh/gamepad-wrapper@1.3.4",
+          "iwer":                           "https://esm.sh/iwer@1.0.4",
+          "react":                          "https://esm.sh/react@18.3.1",
+          "react/jsx-runtime":              "https://esm.sh/react@18.3.1/jsx-runtime",
+          "react-dom":                      "https://esm.sh/react-dom@18.3.1?external=react",
+          "react-dom/client":               "https://esm.sh/react-dom@18.3.1/client?external=react",
+          "@iwer/devui":                    "https://esm.sh/@iwer/devui@0.1.1?external=iwer,react,react-dom",
+          "@huggingface/transformers":      "https://esm.sh/@huggingface/transformers@3.7.5"
+        }
+      }
+    </script>
 
-				<a href="https://opensource.fb.com/legal/terms/">Terms</a>&nbsp;|&nbsp;
-				<a href="https://opensource.fb.com/legal/privacy/">Privacy</a>
-			</div>
-		</div>
-		<script type="module" src="./index.js"></script>
-	</body>
+    <style>
+      :root {
+        --bg: #0a0d14;
+        --panel: #12182a;
+        --panel-2: #1f2740;
+        --text: #e9eef7;
+        --muted: #9bb6ea;
+        --dim: #6e87b8;
+        --accent: #ffa276;
+        --good: #69e2c4;
+        --bad: #f57b8a;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased; }
+      a { color: var(--muted); text-decoration: none; }
+      a:hover { color: #ffffff; }
+
+      .topbar {
+        position: fixed; inset: 0 0 auto 0;
+        padding: 14px 20px;
+        display: flex; gap: 18px; align-items: center; justify-content: space-between;
+        z-index: 10;
+      }
+      .brand { font-weight: 600; letter-spacing: 0.04em; }
+      .brand-glyph { color: var(--accent); margin-right: 6px; }
+
+      #gate {
+        max-width: 540px; margin: 80px auto 40px; padding: 28px 26px 32px;
+        background: var(--panel);
+        border: 1px solid rgba(155, 182, 234, 0.18);
+        border-radius: 18px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+      }
+      #gate h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: 0.01em; }
+      #gate .lead { margin: 0 0 18px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+      #gate .lead strong { color: var(--text); }
+
+      .cap-list { list-style: none; padding: 0; margin: 0 0 16px; }
+      .cap-list li {
+        padding: 8px 12px; margin: 6px 0;
+        background: rgba(155, 182, 234, 0.06);
+        border-left: 3px solid var(--dim);
+        border-radius: 6px;
+        font-size: 13px;
+        display: flex; align-items: center; gap: 10px;
+      }
+      .cap-list li.ok  { border-left-color: var(--good); color: var(--text); }
+      .cap-list li.bad { border-left-color: var(--bad);  color: var(--bad); }
+      .cap-list li .icon { width: 16px; text-align: center; }
+
+      .model-line {
+        display: flex; align-items: center; gap: 10px;
+        font-size: 13px; color: var(--muted); margin-top: 14px;
+      }
+      .model-line .badge {
+        padding: 2px 8px; border-radius: 999px;
+        background: rgba(255, 162, 118, 0.14); color: var(--accent);
+        font-weight: 600; font-size: 11px;
+      }
+
+      progress {
+        width: 100%; height: 8px; appearance: none;
+        margin: 10px 0 4px;
+      }
+      progress::-webkit-progress-bar    { background: rgba(155, 182, 234, 0.10); border-radius: 4px; }
+      progress::-webkit-progress-value  { background: var(--accent); border-radius: 4px; }
+      progress::-moz-progress-bar       { background: var(--accent); border-radius: 4px; }
+      #dl-status { color: var(--dim); font-size: 12px; min-height: 18px; }
+
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 18px; }
+
+      button {
+        appearance: none; border: 0; cursor: pointer;
+        font-family: inherit; font-size: 14px; font-weight: 600;
+        padding: 11px 18px; border-radius: 999px;
+        background: var(--accent); color: #1a0e07;
+        transition: filter 0.15s ease, opacity 0.15s ease;
+      }
+      button:hover:not([disabled])  { filter: brightness(1.1); }
+      button[disabled] { opacity: 0.45; cursor: not-allowed; }
+      .ghost {
+        background: transparent; color: var(--muted);
+        border: 1px solid rgba(155, 182, 234, 0.30);
+      }
+
+      #vrButtonHost { margin-top: 8px; min-height: 1px; }
+      #vrButtonHost > button {
+        position: static !important;
+        bottom: auto !important; left: auto !important; right: auto !important;
+        margin: 0 !important;
+        background: var(--accent) !important; color: #1a0e07 !important;
+        border: 0 !important;
+      }
+
+      .footnote {
+        margin-top: 20px; padding-top: 14px;
+        border-top: 1px solid rgba(155, 182, 234, 0.12);
+        color: var(--dim); font-size: 12px; line-height: 1.5;
+      }
+      .footnote code { background: rgba(155, 182, 234, 0.08); padding: 1px 6px; border-radius: 4px; color: var(--muted); }
+
+      body.in-xr #gate, body.in-xr .topbar { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="topbar">
+      <span class="brand"><span class="brand-glyph">◎</span>Lens</span>
+      <span><a href="https://ask-meridian.uk">ask-meridian.uk</a></span>
+    </div>
+
+    <main id="gate">
+      <h1>Vision Lab — VR</h1>
+      <p class="lead">
+        Point at a glyph in your headset, pull the trigger, and a
+        <strong>vision-language model running on-device</strong> describes
+        what's in front of you. Compatible skills orbit you as planets.
+        Frames never leave the browser.
+      </p>
+
+      <ul id="capList" class="cap-list">
+        <li id="cap-webxr"  class="pending"><span class="icon">…</span><span>WebXR (immersive-vr)</span></li>
+        <li id="cap-webgpu" class="pending"><span class="icon">…</span><span>WebGPU</span></li>
+        <li id="cap-opfs"   class="pending"><span class="icon">…</span><span>Origin Private File System (cache)</span></li>
+      </ul>
+
+      <div class="model-line">
+        <span class="badge">SMOLVLM-500M</span>
+        <span>~500 MB · one-time download · cached in OPFS</span>
+      </div>
+      <progress id="dl" value="0" max="100"></progress>
+      <p id="dl-status">Press <strong>Begin</strong> to download the model. Subsequent visits load in seconds.</p>
+
+      <div class="row">
+        <button id="beginBtn" disabled>Begin →</button>
+        <div id="vrButtonHost"></div>
+        <button id="skipBtn" class="ghost" hidden>Skip model · enter VR with mock answers</button>
+      </div>
+
+      <p class="footnote">
+        No bundler — modules load from <code>esm.sh</code> on first hit and
+        are then cached by the browser. Open in the Quest browser, complete
+        the model download, then press the VR button.
+      </p>
+    </main>
+
+    <!--
+      Surface module-load + runtime errors directly into the gate. Before
+      this, a failure deep in the import graph (esm.sh 4xx, peer-dep clash,
+      ReferenceError in iwer) just left the Begin button disabled with no
+      indication why. Now the user sees the actual error string.
+    -->
+    <script>
+      (function () {
+        const out = function (msg) {
+          var el = document.getElementById('dl-status');
+          if (el) { el.textContent = msg; el.style.color = '#f57b8a'; }
+          var btn = document.getElementById('beginBtn');
+          if (btn) btn.disabled = true;
+          console.error('[lens]', msg);
+        };
+        window.addEventListener('error', function (e) {
+          out('Module error: ' + (e.error?.message || e.message || 'unknown') +
+              (e.filename ? ' @ ' + e.filename.split('/').pop() : ''));
+        });
+        window.addEventListener('unhandledrejection', function (e) {
+          out('Unhandled rejection: ' + (e.reason?.message || e.reason || 'unknown'));
+        });
+      })();
+    </script>
+    <script type="module" src="./index.js?v=step-4"></script>
+  </body>
 </html>
