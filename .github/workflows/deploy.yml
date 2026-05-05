@@ -50,18 +50,4 @@ jobs:
           CF_EMAIL:   ${{ secrets.CF_EMAIL }}
           CF_KEY:     ${{ secrets.CF_KEY }}
           CF_ACCOUNT: ${{ secrets.CF_ACCOUNT }}
-        run: |
-          curl -fsS -H "X-Auth-Email: $CF_EMAIL" -H "X-Auth-Key: $CF_KEY" \
-            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT/workers/scripts" \
-            | python3 -c "
-import json, os, sys, datetime as dt
-d = json.load(sys.stdin)
-script = next((s for s in d.get('result', []) if s['id'] == 'lens-proxy'), None)
-assert script, 'lens-proxy script not found'
-modified = script.get('modified_on')
-age = (dt.datetime.now(dt.timezone.utc) - dt.datetime.fromisoformat(modified)).total_seconds()
-print(f'lens-proxy modified_on={modified}  ({age:.0f}s ago)')
-assert age < 300, f'modified_on is {age:.0f}s old; this run did not deploy a fresh script'
-"
-          # End-user smoke (browser → edge) is run manually; CF firewall blocks
-          # GH Actions IPs unconditionally on this zone.
+        run: python3 scripts/verify-deploy.py
