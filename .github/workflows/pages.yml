@@ -1,0 +1,39 @@
+name: Deploy lens to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate healthz.json
+        run: |
+          cat > src/healthz.json <<EOF
+          {"ok":true,"name":"lens","host":"github-pages","commit":"${GITHUB_SHA:0:7}","run_id":"${GITHUB_RUN_ID}","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+          EOF
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./src
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

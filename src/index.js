@@ -1,7 +1,7 @@
 // Lens — step 4: end-to-end click flow.
 //
 // IDLE  → preset click → THINKING (streamed mock answer) → ANSWER
-// ANSWER → "Find skills" → ROUTING → ORBIT (real /api/orbital-route)
+// ANSWER → "Find skills" → ROUTING → ORBIT (in-browser via meridian's _lib/router.mjs)
 // ORBIT  → planet click → DETAIL → close → ORBIT
 // any state: left-controller squeeze → IDLE
 //
@@ -137,7 +137,12 @@ function keplerPosition(elements, t, M0) {
   return { x: x_op, y: y_op * si, z: y_op * ci };
 }
 
-const ROUTE_ENDPOINT = 'https://ask-meridian.uk/api/orbital-route';
+// Skill routing now runs in-browser via meridian's edge router, loaded
+// cross-origin from its GitHub Pages site. ESM dynamic import + a static
+// _skills.json corpus replace the old POST to /api/orbital-route.
+const MERIDIAN_PAGES   = 'https://luuow.github.io/meridian-mcp';
+const ROUTER_MODULE    = `${MERIDIAN_PAGES}/_lib/router.mjs`;
+const ROUTER_CORPUS    = `${MERIDIAN_PAGES}/_skills.json`;
 
 const ARC_RADIUS    = 1.5;
 const CARD_Y        = 1.5;
@@ -741,22 +746,19 @@ async function routeAndOrbit() {
   state.routeBusy = true;
   state.phase = 'routing';
   state.route.visible = false;
-  setHint('routing through ask-meridian.uk…', COL_TEXT_H);
+  setHint('routing locally via meridian edge router…', COL_TEXT_H);
 
   let skills = [];
   try {
-    const res = await fetch(ROUTE_ENDPOINT, {
-      method:  'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        task: state.full.slice(0, 500),
-        limit: 5, provider: 'workers-ai', context: 'text',
-      }),
+    const { route } = await import(/* @vite-ignore */ ROUTER_MODULE);
+    const data = await route({
+      task:      state.full.slice(0, 500),
+      limit:     5,
+      skillsUrl: ROUTER_CORPUS,
     });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) skills = (data.skills || data.results || []).slice(0, 5);
+    skills = (data.skills || []).slice(0, 5);
   } catch (e) {
-    console.warn('[lens] route fetch failed', e);
+    console.warn('[lens] router import/route failed', e);
   }
   if (!skills.length) skills = FALLBACK_SKILLS;
   spawnOrbit(skills);
