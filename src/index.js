@@ -47,6 +47,7 @@ const NAV_LINKS = [
   { label: '🔭 Vision Lab', url: 'https://ask-meridian.uk/miniapp/vision-lab/' },
   { label: '⚛︎ Photon',     url: 'https://photon.ask-meridian.uk' },
   { label: '◎ Lens',         url: null,        current: true },
+  { label: '▶ Demo',         url: '__demo__' },
   { label: '✕ Exit VR',     url: '__exit__' },
 ];
 const NAV_X      = -1.55;
@@ -62,6 +63,17 @@ const FALLBACK_SKILLS = [
   { id: 'comet-router',  name: 'comet-router',  class: 'comet',     score: 0.55, system: 'meridian-mcp', description: 'Long-period high-eccentricity router for rare-task coverage.' },
   { id: 'moon-cache',    name: 'moon-cache',    class: 'moon',      score: 0.48, system: 'lens',         description: 'Lightweight skill that satellites a parent skill (here: orbits the planet).' },
   { id: 'irregular-fx',  name: 'irregular-fx',  class: 'irregular', score: 0.41, system: 'meridian-mcp', description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
+];
+
+// Demo mode — six curated skills, one per class. Independent of any LLM
+// response so a recording always shows every orbital signature.
+const DEMO_SKILLS = [
+  { id: 'demo-planet',    name: 'persona-research',     class: 'planet',    score: 0.91, system: 'meridian-mcp', description: 'Build a source base for a person-specific voice model from public material — find, score, de-noise.' },
+  { id: 'demo-moon',      name: 'voice-cache',          class: 'moon',      score: 0.78, system: 'meridian-mcp', description: 'Lightweight cache satellites persona-research — local audio chunk store, tight loop around the parent.' },
+  { id: 'demo-trojan',    name: 'consent-archive',      class: 'trojan',    score: 0.72, system: 'meridian-mcp', description: 'Locked at L4 with persona-research — consent records share its orbital plane and period, leading by 60°.' },
+  { id: 'demo-asteroid',  name: 'transcript-clean',     class: 'asteroid',  score: 0.65, system: 'meridian-mcp', description: 'Fast small loop in the inner belt — quick transcript de-disfluency pass.' },
+  { id: 'demo-comet',     name: 'rare-language-router', class: 'comet',     score: 0.55, system: 'meridian-mcp', description: 'Long-period high-eccentricity router — rare-language coverage swooping through every ~75 s.' },
+  { id: 'demo-irregular', name: 'retro-corpus-mirror',  class: 'irregular', score: 0.48, system: 'meridian-mcp', description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
 ];
 
 // Orbital mechanics — each celestial class the meridian skill router emits gets a distinct
@@ -642,6 +654,14 @@ function spawnOrbit(skills) {
   setHint('aim a planet to inspect orbital elements', COL_TEXT);
 }
 
+function spawnDemoSkills() {
+  closeDetail();
+  state.answer.visible = false;
+  state.route.visible = false;
+  spawnOrbit(DEMO_SKILLS);
+  setHint('demo · one curated skill per class', COL_TEXT);
+}
+
 function clearOrbit() {
   state.orbit.forEach((p) => {
     state.scene.remove(p);
@@ -711,6 +731,8 @@ function handleClick(panel) {
     if (url === '__exit__') {
       // End the XR session so the DOM gate (and the burger menu) reappear.
       state.renderer?.xr?.getSession?.()?.end?.();
+    } else if (url === '__demo__') {
+      spawnDemoSkills();
     } else if (url) {
       // Cross-property nav: ending the session first prevents Quest from
       // showing a stuck black frame as the new page loads.
