@@ -47,15 +47,17 @@ jobs:
 
       - name: Smoke test
         run: |
-          # Edge propagation is fast but not instant. Retry briefly.
+          # Cloudflare 403s the default curl/x.x UA from GH Actions IP ranges.
+          # Send a Chrome-like UA so the smoke check actually reaches the edge.
+          UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
           SHORT="${GITHUB_SHA:0:7}"
           for i in 1 2 3 4 5; do
-            if curl -fsS "https://lens.ask-meridian.uk/healthz" > /tmp/h.json; then
+            if curl -fsS -A "$UA" "https://lens.ask-meridian.uk/healthz" > /tmp/h.json; then
               cat /tmp/h.json
               python3 -c "import json,sys; d=json.load(open('/tmp/h.json')); want=sys.argv[1]; got=d.get('build',{}).get('commit'); assert got == want, f'commit mismatch: edge serves {got}, expected {want}'" "$SHORT"
               exit 0
             fi
-            echo "edge not yet serving, retry $i/5"
+            echo "edge not yet serving (curl exit $?), retry $i/5"
             sleep 4
           done
           echo "::error::lens.ask-meridian.uk did not serve the new build in time"
