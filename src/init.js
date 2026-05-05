@@ -67,6 +67,10 @@ export async function init(setupScene = () => {}, onFrame = () => {}) {
 	renderer.setPixelRatio(window.devicePixelRatio);
 	renderer.setSize(window.innerWidth, window.innerHeight);
 	renderer.xr.enabled = true;
+	// Max FFR — Quest renders the periphery at lower resolution. On a busy
+	// orbital scene this is the single biggest GPU saving and the visual cost
+	// is barely noticeable since the user's gaze tracks a planet at the centre.
+	try { renderer.xr.setFoveation(1.0); } catch { /* unsupported runtime */ }
 	container.appendChild(renderer.domElement);
 
 	const environment = new RoomEnvironment(renderer);

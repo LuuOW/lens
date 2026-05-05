@@ -17,7 +17,22 @@
 import * as THREE from 'three';
 import { Text } from 'troika-three-text';
 import { XR_BUTTONS } from 'gamepad-wrapper';
+import gsap from 'gsap';
 import { init } from './init.js';
+
+// gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
+// a scratch Color so we can call .setHex() once instead of allocating per tween.
+const _tColor = new THREE.Color();
+function tweenColor(mat, hex, dur = 0.22) {
+  _tColor.setHex(hex);
+  gsap.to(mat.color, { r: _tColor.r, g: _tColor.g, b: _tColor.b, duration: dur, ease: 'power2.out', overwrite: 'auto' });
+}
+function tweenScale(obj, to, dur = 0.20, ease = 'power2.out') {
+  gsap.to(obj.scale, { x: to, y: to, z: to, duration: dur, ease, overwrite: 'auto' });
+}
+function tweenEmissive(mat, intensity, dur = 0.20) {
+  gsap.to(mat, { emissiveIntensity: intensity, duration: dur, ease: 'power2.out', overwrite: 'auto' });
+}
 
 // ── Tunables ─────────────────────────────────────────────────────────────
 const PRESETS = [
@@ -158,6 +173,8 @@ const state = {
   route:    null,        // { group, panel, text }
   orbit:    [],          // planet meshes
   orbitRings: [],        // per-planet ellipse Lines (visible orbit traces)
+  trails:   [],          // per-planet fading trail records
+  starLayers: [],        // parallax + twinkle star Points groups
   physicsPanel: null,    // right-side hover info card
   detail:   null,        // { group, closeMesh }
   selected: null,
@@ -306,6 +323,52 @@ function makePlanet(skill, i, n) {
   mesh.userData.label = label;
 
   return mesh;
+}
+
+// Per-class trail length. Comets streak much further so the high-eccentricity
+// arc reads at a glance; irregular gets a medium-length retrograde tail.
+const TRAIL_LEN = { planet: 30, moon: 22, trojan: 30, asteroid: 28, comet: 70, irregular: 42 };
+
+function makeTrail(cls, color) {
+  const N = TRAIL_LEN[cls] ?? 30;
+  const positions = new Float32Array(N * 3);
+  // Per-vertex normalized index 0..1 — used in the fragment shader to fade
+  // from invisible (oldest, head of buffer) to bright (newest, tail of buffer).
+  const idx = new Float32Array(N);
+  for (let i = 0; i < N; i++) idx[i] = i / (N - 1);
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geom.setAttribute('aIdx',     new THREE.BufferAttribute(idx, 1));
+  geom.setDrawRange(N, 0);
+  const mat = new THREE.ShaderMaterial({
+    transparent: true,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+    },
+    vertexShader: `
+      attribute float aIdx;
+      varying float vIdx;
+      void main() {
+        vIdx = aIdx;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      precision mediump float;
+      uniform vec3 uColor;
+      varying float vIdx;
+      void main() {
+        // Quadratic head-bias so the very tip pops without a hard cutoff at the tail.
+        float a = vIdx * vIdx * 0.78;
+        gl_FragColor = vec4(uColor, a);
+      }
+    `,
+  });
+  const line = new THREE.Line(geom, mat);
+  line.frustumCulled = false; // trails span large arcs — false-cull bug otherwise
+  return { line, positions, count: 0, N };
 }
 
 function makeOrbitRing(elements, color = 0x9bb6ea) {
@@ -514,25 +577,75 @@ function setupScene({ scene, renderer }) {
   key.position.set(2, 5, 3);
   scene.add(key);
 
-  // Starfield
+  // Starfield — three concentric layers at different radii give true parallax
+  // when the user moves their head; each layer rotates at its own slow rate.
+  // Per-vertex twinkle seed drives a per-fragment sin() so brightness wobbles
+  // independently for each star without per-vertex CPU work.
   {
-    const geom = new THREE.BufferGeometry();
-    const N = 800;
-    const pos = new Float32Array(N * 3);
-    for (let i = 0; i < N; i++) {
-      const u = Math.random(), v = Math.random();
-      const theta = 2 * Math.PI * u;
-      const phi   = Math.acos(2 * v - 1);
-      const r = 25 + Math.random() * 8;
-      pos[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
-      pos[i * 3 + 1] = r * Math.cos(phi);
-      pos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+    const layerSpec = [
+      { count: 420, rMin: 22, rMax: 28, size: 4.5, opacity: 0.85, rotSpeed:  0.0009, color: 0xc9d4ec },
+      { count: 240, rMin: 32, rMax: 38, size: 7.5, opacity: 0.62, rotSpeed: -0.0005, color: 0xb6c5e8 },
+      { count: 110, rMin: 45, rMax: 52, size: 11.5, opacity: 0.42, rotSpeed:  0.0002, color: 0xa78bfa },
+    ];
+    for (const spec of layerSpec) {
+      const positions = new Float32Array(spec.count * 3);
+      const seeds     = new Float32Array(spec.count);
+      for (let i = 0; i < spec.count; i++) {
+        const u = Math.random(), v = Math.random();
+        const theta = 2 * Math.PI * u;
+        const phi   = Math.acos(2 * v - 1);
+        const r = spec.rMin + Math.random() * (spec.rMax - spec.rMin);
+        positions[i * 3]     = r * Math.sin(phi) * Math.cos(theta);
+        positions[i * 3 + 1] = r * Math.cos(phi);
+        positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+        seeds[i] = Math.random();
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geom.setAttribute('aSeed',    new THREE.BufferAttribute(seeds, 1));
+      const mat = new THREE.ShaderMaterial({
+        transparent: true,
+        depthWrite: false,
+        uniforms: {
+          uTime:    { value: 0 },
+          uSize:    { value: spec.size },
+          uColor:   { value: new THREE.Color(spec.color) },
+          uOpacity: { value: spec.opacity },
+        },
+        vertexShader: `
+          attribute float aSeed;
+          varying float vSeed;
+          uniform float uSize;
+          void main() {
+            vSeed = aSeed;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = uSize;
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          precision mediump float;
+          varying float vSeed;
+          uniform float uTime;
+          uniform vec3  uColor;
+          uniform float uOpacity;
+          void main() {
+            vec2 c = gl_PointCoord - 0.5;
+            float d = dot(c, c);
+            if (d > 0.25) discard;
+            // Twinkle: sin with per-star phase + frequency. mediump-safe.
+            float t = sin(uTime * (0.5 + vSeed * 1.4) + vSeed * 6.2832);
+            float a = uOpacity * (0.55 + 0.45 * t);
+            // Soft round point (1 - 4*d2) clamped.
+            gl_FragColor = vec4(uColor, a * max(0.0, 1.0 - d * 4.0));
+          }
+        `,
+      });
+      const points = new THREE.Points(geom, mat);
+      points.userData = { rotSpeed: spec.rotSpeed, mat };
+      scene.add(points);
+      state.starLayers.push(points);
     }
-    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    scene.add(new THREE.Points(geom, new THREE.PointsMaterial({
-      color: 0xc9d4ec, size: 0.07, sizeAttenuation: true,
-      transparent: true, opacity: 0.85,
-    })));
   }
 
   scene.add(new THREE.GridHelper(20, 20, 0x223052, 0x1a2438));
@@ -673,11 +786,29 @@ function spawnOrbit(skills) {
     state.orbit.push(planet);
     state.panels.push(planet);
 
+    // Spawn pop — scale-from-near-zero with a back-out overshoot, staggered so
+    // the orbit assembles like a system materialising rather than appearing
+    // all at once. delay caps at 6×0.06s = 0.36s so a full orbit is in place
+    // well under half a second.
+    planet.scale.setScalar(0.001);
+    gsap.to(planet.scale, {
+      x: 1, y: 1, z: 1, duration: 0.55, ease: 'back.out(1.7)',
+      delay: i * 0.06,
+      overwrite: 'auto',
+    });
+
     // Per-planet orbit ring — colour matches the planet so you can tell which
     // ring belongs to which when several share an inclination.
     const ring = makeOrbitRing(planet.userData.elements, planet.userData.color);
     state.scene.add(ring);
     state.orbitRings.push(ring);
+
+    // Comet-style fading trail. Shader fades vIdx² so the freshest segment
+    // (just behind the planet) is bright and the tail tapers to invisible.
+    const trail = makeTrail(planet.userData.cls, planet.userData.color);
+    state.scene.add(trail.line);
+    trail.planet = planet;
+    state.trails.push(trail);
   });
   state.phase = 'orbit';
   setHint('aim a planet to inspect orbital elements', COL_TEXT);
@@ -692,14 +823,31 @@ function spawnDemoSkills() {
 }
 
 function clearOrbit() {
+  // Kill any in-flight tweens on the bodies we're about to dispose so gsap
+  // doesn't keep ticking against freed materials.
   state.orbit.forEach((p) => {
+    gsap.killTweensOf(p.scale);
+    gsap.killTweensOf(p.material);
     state.scene.remove(p);
+    p.geometry.dispose();
+    p.material.dispose();
+    try { p.userData.label?.dispose?.(); } catch { /* troika best-effort */ }
     const idx = state.panels.indexOf(p);
     if (idx >= 0) state.panels.splice(idx, 1);
   });
   state.orbit = [];
-  state.orbitRings.forEach((r) => state.scene.remove(r));
+  state.orbitRings.forEach((r) => {
+    state.scene.remove(r);
+    r.geometry.dispose();
+    r.material.dispose();
+  });
   state.orbitRings = [];
+  state.trails.forEach((t) => {
+    state.scene.remove(t.line);
+    t.line.geometry.dispose();
+    t.line.material.dispose();
+  });
+  state.trails = [];
   hidePhysicsPanel();
 }
 
@@ -734,12 +882,24 @@ function reset() {
 }
 
 // ── Click dispatch ──────────────────────────────────────────────────────
+// Snap to white, then ease back to whatever the panel should look like once
+// the click resolves (hovered colour if still hovered, otherwise base). One
+// gsap tween replaces the prior per-frame flash-decay book-keeping.
+function flashBaseColor(panel) {
+  const k = panel.userData.kind;
+  if (k === 'preset')        return COL_PANEL;
+  if (k === 'route')         return 0x1f2740;
+  if (k === 'close')         return 0x1f2740;
+  if (k === 'physics-close') return panel.userData.baseColor;
+  if (k === 'navlink')       return panel.userData.baseColor;
+  return null;
+}
 function flashClick(panel) {
-  const orig = panel.material.color.getHex();
-  panel.userData._origColor = orig;
-  panel.material.color.setHex(COL_PANEL_C);
-  state.flashUntil = performance.now() + 220;
-  state.flashing = panel;
+  const base = flashBaseColor(panel);
+  if (base === null) return;
+  const targetHex = state.hovered === panel ? COL_PANEL_C : base;
+  panel.material.color.setHex(0xffffff);
+  tweenColor(panel.material, targetHex, 0.32);
 }
 
 function handleClick(panel) {
@@ -779,47 +939,40 @@ function setHover(panel) {
 
   if (state.hovered) {
     const m = state.hovered;
-    if (m.userData.kind === 'preset') {
-      m.material.color.setHex(COL_PANEL);
+    const k = m.userData.kind;
+    if (k === 'preset') {
+      tweenColor(m.material, COL_PANEL);
       const card = m.parent;
+      // Troika text needs an explicit material colour change + sync; tween
+      // the underlying material.color the same way as the panel.
+      tweenColor(card.userData.text.material, COL_TEXT);
       card.userData.text.color = COL_TEXT;
-      card.userData.text.material.color.setHex(COL_TEXT);
       card.userData.text.sync();
-    } else if (m.userData.kind === 'route') {
-      m.material.color.setHex(0x1f2740);
-    } else if (m.userData.kind === 'close') {
-      m.material.color.setHex(0x1f2740);
-    } else if (m.userData.kind === 'planet') {
-      m.material.emissiveIntensity = 0.25;
-      m.scale.setScalar(1);
-      // Physics panel intentionally stays visible after un-hover; it's
-      // sticky and dismissed only by its × button or clearOrbit().
-    } else if (m.userData.kind === 'physics-close') {
-      m.material.color.setHex(m.userData.baseColor);
-    } else if (m.userData.kind === 'navlink') {
-      m.material.color.setHex(m.userData.baseColor);
+    } else if (k === 'route' || k === 'close') {
+      tweenColor(m.material, 0x1f2740);
+    } else if (k === 'planet') {
+      tweenEmissive(m.material, 0.25);
+      tweenScale(m, 1.0, 0.22);
+      // Physics panel stays sticky; only × or clearOrbit dismisses.
+    } else if (k === 'physics-close' || k === 'navlink') {
+      tweenColor(m.material, m.userData.baseColor);
     }
   }
 
   if (panel) {
-    if (panel.userData.kind === 'preset') {
-      panel.material.color.setHex(COL_PANEL_H);
+    const k = panel.userData.kind;
+    if (k === 'preset') {
+      tweenColor(panel.material, COL_PANEL_H);
       const card = panel.parent;
+      tweenColor(card.userData.text.material, COL_TEXT_H);
       card.userData.text.color = COL_TEXT_H;
-      card.userData.text.material.color.setHex(COL_TEXT_H);
       card.userData.text.sync();
-    } else if (panel.userData.kind === 'route') {
-      panel.material.color.setHex(COL_PANEL_C);
-    } else if (panel.userData.kind === 'close') {
-      panel.material.color.setHex(COL_PANEL_C);
-    } else if (panel.userData.kind === 'planet') {
-      panel.material.emissiveIntensity = 0.5;
-      panel.scale.setScalar(1.15);
+    } else if (k === 'route' || k === 'close' || k === 'physics-close' || k === 'navlink') {
+      tweenColor(panel.material, COL_PANEL_C);
+    } else if (k === 'planet') {
+      tweenEmissive(panel.material, 0.55);
+      tweenScale(panel, 1.18, 0.22, 'back.out(2)');
       updatePhysicsPanel(panel.userData.skill, panel.userData.elements);
-    } else if (panel.userData.kind === 'physics-close') {
-      panel.material.color.setHex(COL_PANEL_C);
-    } else if (panel.userData.kind === 'navlink') {
-      panel.material.color.setHex(COL_PANEL_C);
     }
   }
   state.hovered = panel;
@@ -847,30 +1000,38 @@ function onFrame(delta, _time, { controllers, camera }) {
   // Stream mock reply if currently thinking
   streamTick();
 
+  const tNow = performance.now() / 1000;
+
+  // Starfield: drift each layer slowly (independent rates → parallax) and
+  // tick each shader's uTime so the per-fragment twinkle wobbles.
+  for (const layer of state.starLayers) {
+    layer.rotation.y += layer.userData.rotSpeed;
+    layer.userData.mat.uniforms.uTime.value = tNow;
+  }
+
   // Per-class Kepler motion. Each planet's mean anomaly advances at its own
   // (Kepler's-3rd-law) rate; we solve for the eccentric anomaly each frame
-  // and project to 3D through the perifocal → inclined frame.
+  // and project to 3D through the perifocal → inclined frame. Trails buffer
+  // the same world position into a shifting Float32Array — copyWithin shifts
+  // by one vec3 per frame, then we overwrite the new head.
   if (state.orbit.length) {
     const cam = camera.getWorldPosition(_o);
-    const t = performance.now() / 1000;
     state.orbit.forEach((p) => {
-      const pos = keplerPosition(p.userData.elements, t, p.userData.M0);
+      const pos = keplerPosition(p.userData.elements, tNow, p.userData.M0);
       p.position.set(pos.x, pos.y + ORBIT_Y, pos.z);
       p.userData.label?.lookAt(cam);
     });
-  }
-
-  // Click flash decay
-  if (state.flashing && performance.now() > state.flashUntil) {
-    const m = state.flashing;
-    if (m.userData.kind === 'preset') {
-      m.material.color.setHex(state.hovered === m ? COL_PANEL_H : COL_PANEL);
-    } else if (m.userData.kind === 'route') {
-      m.material.color.setHex(state.hovered === m ? COL_PANEL_C : 0x1f2740);
-    } else if (m.userData.kind === 'close') {
-      m.material.color.setHex(state.hovered === m ? COL_PANEL_C : 0x1f2740);
+    for (const t of state.trails) {
+      const p = t.planet;
+      t.positions.copyWithin(0, 3);
+      const last = t.N * 3;
+      t.positions[last - 3] = p.position.x;
+      t.positions[last - 2] = p.position.y;
+      t.positions[last - 1] = p.position.z;
+      t.line.geometry.attributes.position.needsUpdate = true;
+      t.count = Math.min(t.count + 1, t.N);
+      t.line.geometry.setDrawRange(t.N - t.count, t.count);
     }
-    state.flashing = null;
   }
 
   // Right controller: raycast for hover / click
