@@ -332,8 +332,9 @@ function makeOrbitRing(elements, color = 0x9bb6ea) {
 }
 
 function makePhysicsPanel() {
-  // Static panel pinned on the user's right at eye height. Hidden until a
-  // planet is hovered. Mirror geometry of the in-VR nav strip on the left.
+  // Static panel pinned on the user's right at eye height. Sticky: shows on
+  // first planet hover, updates to track subsequent hovers, dismissed only
+  // by the × button or a scene reset (clearOrbit).
   const group = new THREE.Group();
   const w = 0.70, h = 0.40;
   group.position.set(1.55, 1.85, -1.0);
@@ -356,9 +357,26 @@ function makePhysicsPanel() {
   body.position.set(-w / 2 + 0.04, h / 2 - 0.16, 0.002);
   body.sync(); group.add(body);
 
+  // × close button — top-right corner, distinct from the answer-detail
+  // 'close' kind so handleClick can route it independently.
+  const closeBaseColor = 0x1f2740;
+  const close = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.09, 0.07),
+    frontMaterial(closeBaseColor, 0.94),
+  );
+  close.position.set(w / 2 - 0.06, h / 2 - 0.05, 0.003);
+  close.userData.kind = 'physics-close';
+  close.userData.baseColor = closeBaseColor;
+  group.add(close);
+
+  const closeText = makeText('×', { size: 0.046, color: COL_TEXT });
+  closeText.position.set(w / 2 - 0.06, h / 2 - 0.05, 0.004);
+  closeText.sync();
+  group.add(closeText);
+
   group.lookAt(0, 1.85, 0);
   group.visible = false;
-  group.userData = { kind: 'physics-group', title, meta, body };
+  group.userData = { kind: 'physics-group', title, meta, body, closeMesh: close };
   return group;
 }
 
@@ -378,10 +396,21 @@ function updatePhysicsPanel(skill, elements) {
     `T (period)       ${T.toFixed(0)} s` +
     (elements.retrograde ? '\nretrograde' : '');
   panel.userData.body.sync();
-  panel.visible = true;
+  if (!panel.visible) {
+    panel.visible = true;
+    // Raycaster doesn't filter on .visible, so the × is only in the panels
+    // list while the panel is showing.
+    if (state.panels.indexOf(panel.userData.closeMesh) < 0) {
+      state.panels.push(panel.userData.closeMesh);
+    }
+  }
 }
 function hidePhysicsPanel() {
-  if (state.physicsPanel) state.physicsPanel.visible = false;
+  const panel = state.physicsPanel;
+  if (!panel) return;
+  panel.visible = false;
+  const idx = state.panels.indexOf(panel.userData.closeMesh);
+  if (idx >= 0) state.panels.splice(idx, 1);
 }
 
 function makeDetailCard(skill) {
@@ -726,6 +755,8 @@ function handleClick(panel) {
     closeDetail();
     state.phase = 'orbit';
     setHint('aim a planet to inspect', COL_TEXT);
+  } else if (k === 'physics-close') {
+    hidePhysicsPanel();
   } else if (k === 'navlink') {
     const url = panel.userData.url;
     if (url === '__exit__') {
@@ -761,9 +792,10 @@ function setHover(panel) {
     } else if (m.userData.kind === 'planet') {
       m.material.emissiveIntensity = 0.25;
       m.scale.setScalar(1);
-      // Hide physics panel when no planet is hovered. Re-shown by the
-      // setHover branch below if a different planet picks up the hover.
-      hidePhysicsPanel();
+      // Physics panel intentionally stays visible after un-hover; it's
+      // sticky and dismissed only by its × button or clearOrbit().
+    } else if (m.userData.kind === 'physics-close') {
+      m.material.color.setHex(m.userData.baseColor);
     } else if (m.userData.kind === 'navlink') {
       m.material.color.setHex(m.userData.baseColor);
     }
@@ -784,6 +816,8 @@ function setHover(panel) {
       panel.material.emissiveIntensity = 0.5;
       panel.scale.setScalar(1.15);
       updatePhysicsPanel(panel.userData.skill, panel.userData.elements);
+    } else if (panel.userData.kind === 'physics-close') {
+      panel.material.color.setHex(COL_PANEL_C);
     } else if (panel.userData.kind === 'navlink') {
       panel.material.color.setHex(COL_PANEL_C);
     }
