@@ -71,19 +71,12 @@ const NAV_LINKS = [
   { label: '▶ Demo',         url: '__demo__' },
   { label: '✕ Exit VR',     url: '__exit__' },
 ];
-// Nav rail on the same circle as the preset cards (radius 1.5). Pushed
-// to ~-72° (-1.25 rad) so the angular separation from the leftmost card
-// (-π/4 = -45°) is a clear 27° instead of the original 15°. On the
-// circle that puts it at x≈-1.42, z≈-0.46 — visibly off-arc-end but
-// still on-curve.
-const NAV_ARC_ANGLE = -1.25;
-const NAV_ARC_RADIUS = ARC_RADIUS;
-const NAV_X      = Math.sin(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
-const NAV_Z      = -Math.cos(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
 const NAV_Y_TOP  = 1.85;
 const NAV_GAP    = 0.16;
 const NAV_W      = 0.70;
 const NAV_H      = 0.13;
+// NAV_X / NAV_Z derived from ARC_RADIUS — defined further down to
+// preserve declaration order (TDZ).
 
 const FALLBACK_SKILLS = [
   { id: 'orbital-route', name: 'orbital-route', class: 'planet',    score: 0.91, system: 'meridian-mcp', description: 'Route a free-form task to compatible skills via Llama-3.3-70B classification.' },
@@ -161,6 +154,13 @@ const ROUTER_CORPUS    = `${MERIDIAN_PAGES}/_skills.json`;
 const ARC_RADIUS    = 1.5;
 const CARD_Y        = 1.5;
 const ARC_SPAN      = Math.PI / 2;
+// Nav rail on the same R=1.5 circle as the cards, pushed to -1.25 rad
+// (~-72°) for a clear 27° angular gap from the leftmost card (-π/4).
+// Computed here so they reference the already-declared ARC_RADIUS.
+const NAV_ARC_ANGLE  = -1.25;
+const NAV_ARC_RADIUS = ARC_RADIUS;
+const NAV_X = Math.sin(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
+const NAV_Z = -Math.cos(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
 const PANEL_W       = 0.50;
 const PANEL_H       = 0.18;
 const ANSWER_Y      = 1.85;
