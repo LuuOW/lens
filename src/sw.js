@@ -34,14 +34,11 @@ self.addEventListener('install', (e) => {
 });
 
 self.addEventListener('activate', (e) => {
-  e.waitUntil((async () => {
-    // Drop any old cache versions so we don't accumulate orphaned
-    // 200 MB blobs from previous logic. Match the prefix only.
-    const names = await caches.keys();
-    await Promise.all(names.filter(n => n.startsWith('lens-deps-') && n !== CACHE)
-                            .map(n => caches.delete(n)));
-    await self.clients.claim();
-  })());
+  // No more wiping non-current caches — that just trashed the user's
+  // 250 MB of cached weights every time we bumped the cache name.
+  // Old caches will get garbage-collected by the browser eventually
+  // under storage pressure; meanwhile they cost nothing to keep.
+  e.waitUntil(self.clients.claim());
 });
 
 self.addEventListener('fetch', (event) => {
@@ -59,13 +56,19 @@ self.addEventListener('fetch', (event) => {
     console.log('[lens-sw] miss → network:', url.pathname);
     try {
       const res = await fetch(event.request);
-      // Skip caching: non-OK, opaque (no-cors), Range responses (206).
-      // CRUCIAL: do NOT await cache.put — fork the stream, send the
-      // original to the consumer immediately, drain the clone into
-      // cache in parallel.
       if (res.ok && res.type !== 'opaque' && res.status !== 206) {
-        cache.put(event.request, res.clone()).catch((e) =>
-          console.warn('[lens-sw] cache.put failed for', url.pathname, e));
+        // Stream-fork: send the original response to the consumer
+        // immediately; drain the clone into cache in parallel. AND
+        // wrap the cache.put in event.waitUntil() so the SW context
+        // stays alive long enough to finish the write — otherwise the
+        // browser can terminate the SW after `respondWith` resolves
+        // (i.e. as soon as the consumer has the response handle),
+        // killing the cache.put mid-flight and leaving nothing behind.
+        const putP = cache.put(event.request, res.clone()).then(
+          () => console.log('[lens-sw] cached:', url.pathname),
+          (e) => console.warn('[lens-sw] cache.put failed:', url.pathname, e),
+        );
+        event.waitUntil(putP);
       }
       return res;
     } catch (e) {
