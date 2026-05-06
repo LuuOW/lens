@@ -5,8 +5,8 @@
 //
 // Pure JS. Runs identically in browser and Node — no bundler-only globals.
 
-import { tokenize, uniq } from './tokenize.mjs'
-import { SYSTEM_TERMS }   from './systems.mjs'
+import { tokenize, uniq } from './tokenize.mjs?v=__BUILD_SHA__'
+import { SYSTEM_TERMS }   from './systems.mjs?v=__BUILD_SHA__'
 
 const CLASS_BOOST = {
   planet: 1.30, trojan: 1.20, irregular: 1.10,
