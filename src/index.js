@@ -293,6 +293,41 @@ function makeAnswerCard() {
   return group;
 }
 
+// "Allow camera" button placed off to the user's right-and-back at
+// azimuth +120° (clockwise around Y from -Z forward), on the same
+// ARC_RADIUS circle as the cards. After lookAt() faces the user, a
+// rotateZ in the local frame rolls the panel 50° around its facing
+// axis. Visible only until requestCamera() succeeds.
+function makeCameraBtn() {
+  const group = new THREE.Group();
+  const yaw = 120 * Math.PI / 180;          // azimuth from -Z forward
+  const roll = 50 * Math.PI / 180;          // local-Z roll after lookAt
+  group.position.set(
+    Math.sin(yaw) * ARC_RADIUS,
+    1.40,
+    -Math.cos(yaw) * ARC_RADIUS,
+  );
+
+  const panel = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.62, 0.14),
+    frontMaterial(0x4a2a14, 0.96),          // amber — reads as "permission needed"
+  );
+  panel.userData.kind = 'camera-grant';
+  panel.userData.baseColor = 0x4a2a14;
+  group.add(panel);
+
+  const text = makeText('🎥 Allow camera', { size: 0.045, color: 0xffd1a3 });
+  text.position.z = 0.002;
+  text.sync();
+  group.add(text);
+
+  group.lookAt(0, group.position.y, 0);     // face the user
+  group.rotateZ(roll);                      // 50° roll in local frame
+  group.visible = !isCameraReady();
+  group.userData = { kind: 'camera-btn-group', panel, text };
+  return group;
+}
+
 function makeRouteButton() {
   const group = new THREE.Group();
   group.position.set(0, ROUTE_Y, ROUTE_DIST);
@@ -709,6 +744,14 @@ function setupScene({ scene, renderer, player }) {
   // Physics panel — pinned on the right, hidden until a planet is hovered.
   state.physicsPanel = makePhysicsPanel();
   scene.add(state.physicsPanel);
+
+  // In-VR camera-permission button — only meaningful if the user
+  // entered VR without granting camera at the gate (Skip path or
+  // permission denial). Click triggers getUserMedia, OS prompt
+  // appears outside the VR canvas.
+  state.cameraBtn = makeCameraBtn();
+  scene.add(state.cameraBtn);
+  state.panels.push(state.cameraBtn.userData.panel);
 }
 
 // ── Phase transitions ───────────────────────────────────────────────────
@@ -1001,6 +1044,16 @@ function handleClick(panel) {
     setHint('aim a planet to inspect', COL_TEXT);
   } else if (k === 'physics-close') {
     hidePhysicsPanel();
+  } else if (k === 'camera-grant') {
+    setHint('check the browser window for the camera prompt', COL_TEXT_H);
+    requestCamera({ facingMode: 'environment' })
+      .then(() => {
+        if (state.cameraBtn) state.cameraBtn.visible = false;
+        setHint('camera granted ✓', COL_TEXT);
+      })
+      .catch((e) => {
+        setHint('camera denied: ' + (e.message || e), COL_HINT);
+      });
   } else if (k === 'navlink') {
     const url = panel.userData.url;
     if (url === '__exit__') {
