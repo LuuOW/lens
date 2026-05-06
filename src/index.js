@@ -19,6 +19,7 @@ import { Text } from 'troika-three-text';
 import { XR_BUTTONS } from 'gamepad-wrapper';
 import gsap from 'gsap';
 import { init } from './init.js';
+import { loadVlm, captureSceneFrame, describeImage, isVlmReady } from './vlm.mjs';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
 // a scratch Color so we can call .setHex() once instead of allocating per tween.
@@ -44,6 +45,10 @@ const PRESETS = [
   { id: 'skills',   label: 'Skill hint',   prompt: 'What skills would I need to act on this?' },
 ];
 
+// Fallback strings used only if the VLM is unavailable (model not loaded
+// because the user took the "Skip model" path on the gate, or hardware
+// doesn't support WebGPU/WASM). The real flow runs SmolVLM on a live
+// frame capture from the player's POV.
 const MOCK_ANSWERS = {
   describe: 'A floating workspace of luminous panels arranged in a concave arc above a starfield grid.',
   read:     'No text is visible in the rendered scene.',
@@ -573,9 +578,10 @@ function makeLaser() {
 }
 
 // ── Setup ───────────────────────────────────────────────────────────────
-function setupScene({ scene, renderer }) {
+function setupScene({ scene, renderer, player }) {
   state.scene = scene;
   state.renderer = renderer;
+  state.player = player;
   scene.background = new THREE.Color(COL_BG);
   scene.add(new THREE.AmbientLight(0x202838, 1.0));
   const key = new THREE.DirectionalLight(0xffffff, 0.7);
@@ -707,20 +713,73 @@ function startSelection(presetId) {
   const preset = PRESETS.find(p => p.id === presetId);
   if (!preset) return;
   state.selected = preset;
-  state.full = MOCK_ANSWERS[preset.id] || '...';
   state.shown = 0;
+  state.full = '';
   state.thinkStart = performance.now();
   state.phase = 'thinking';
 
   state.answer.userData.title.text = preset.label;
   state.answer.userData.title.sync();
-  state.answer.userData.meta.text  = 'mock';
+  state.answer.userData.meta.text  = isVlmReady() ? 'capturing…' : 'mock';
   state.answer.userData.meta.sync();
   state.answer.userData.body.text  = '';
   state.answer.userData.body.sync();
   state.answer.visible = true;
 
   state.route.visible = false;
+  setHint('looking…', COL_TEXT_H);
+
+  // Real VLM path — capture a frame and stream tokens. Falls back to the
+  // mock string only if the model never loaded (skip path / unsupported).
+  if (isVlmReady()) {
+    runVlmInference(preset).catch((e) => {
+      console.warn('[lens] VLM failed, falling back to mock:', e);
+      runMockStream(preset);
+    });
+  } else {
+    runMockStream(preset);
+  }
+}
+
+async function runVlmInference(preset) {
+  let image;
+  try {
+    image = captureSceneFrame({
+      renderer: state.renderer,
+      scene:    state.scene,
+      player:   state.player,
+    });
+  } catch (e) {
+    console.warn('[lens] frame capture failed:', e);
+    return runMockStream(preset);
+  }
+
+  state.answer.userData.meta.text = 'SmolVLM · WebGPU';
+  state.answer.userData.meta.sync();
+  setHint('describing what you see…', COL_TEXT_H);
+
+  await describeImage(image, preset.prompt, {
+    onToken: (full) => {
+      state.full = full;
+      state.shown = full.length;
+      state.answer.userData.body.text = full;
+      state.answer.userData.body.sync();
+    },
+    maxTokens: 96,
+  });
+
+  state.phase = 'answer';
+  state.route.visible = true;
+  setHint('aim "Find skills" or pick another preset', COL_TEXT);
+}
+
+function runMockStream(preset) {
+  state.full = MOCK_ANSWERS[preset.id] || '...';
+  state.shown = 0;
+  state.thinkStart = performance.now();
+  state.phase = 'thinking';
+  state.answer.userData.meta.text = 'mock';
+  state.answer.userData.meta.sync();
   setHint('thinking…', COL_TEXT_H);
 }
 
@@ -1075,11 +1134,96 @@ function revealVrButton(button) {
   if (host && button) host.appendChild(button);
   _vrRevealed = true;
 }
+// Capability check — fills in the gate's <li class="pending"> with ✓/✗
+// based on real feature detection. Returns true if WebGPU is available
+// (the only hard requirement for fp16 SmolVLM; WASM works as fallback).
+async function runCapabilityChecks() {
+  const set = (id, ok, label) => {
+    const li = document.getElementById(id)
+    if (!li) return
+    li.classList.remove('pending')
+    li.classList.add(ok ? 'ok' : 'fail')
+    const icon = li.querySelector('.icon')
+    if (icon) icon.textContent = ok ? '✓' : '✗'
+    if (label) {
+      const span = li.querySelectorAll('span')[1]
+      if (span) span.textContent = label
+    }
+  }
+  let xr = false
+  try { xr = !!(navigator.xr && await navigator.xr.isSessionSupported('immersive-vr')) } catch {}
+  set('cap-webxr', xr, xr ? 'WebXR (immersive-vr)' : 'WebXR · use a VR-capable browser or IWER')
+
+  const gpu = !!navigator.gpu
+  set('cap-webgpu', gpu, gpu ? 'WebGPU · fp16 inference' : 'WebGPU · falls back to WASM (slower)')
+
+  let opfs = false
+  try { opfs = !!(navigator.storage && await navigator.storage.getDirectory()) } catch {}
+  set('cap-opfs', opfs, opfs ? 'OPFS · model cached after first load' : 'OPFS · model re-downloads each visit')
+
+  return { xr, gpu, opfs }
+}
+
 (async () => {
   const globals = await init(setupScene, onFrame);
   const status = document.getElementById('dl-status');
-  if (status) status.textContent = 'Lens · click → answer → orbit · press Enter VR.';
-  const begin = document.getElementById('beginBtn');
-  if (begin) begin.disabled = true;
-  revealVrButton(globals.vrButton);
+  const beginBtn = document.getElementById('beginBtn');
+  const skipBtn  = document.getElementById('skipBtn');
+  const dlBar    = document.getElementById('dl');
+
+  await runCapabilityChecks();
+  if (beginBtn) beginBtn.disabled = false;
+  if (skipBtn)  skipBtn.hidden = false;
+
+  // Hand the VR button over only after the user has either downloaded the
+  // VLM or explicitly skipped it. Mirrors the gate's existing copy.
+  function ready(line) {
+    if (status) status.textContent = line;
+    if (beginBtn) { beginBtn.disabled = true; beginBtn.textContent = '✓ ready'; }
+    if (skipBtn) skipBtn.hidden = true;
+    revealVrButton(globals.vrButton);
+  }
+
+  // The skip path keeps the existing mock-answer flow alive for hardware
+  // that can't load the model — useful while debugging from a headless dev
+  // machine. With Skip, presets stream pre-baked strings.
+  if (skipBtn) {
+    skipBtn.hidden = false;
+    skipBtn.addEventListener('click', () => {
+      ready('VLM skipped · presets stream mock answers · enter VR.');
+    });
+  }
+
+  if (beginBtn) {
+    beginBtn.disabled = false;
+    beginBtn.addEventListener('click', async () => {
+      beginBtn.disabled = true;
+      beginBtn.textContent = '… loading';
+      try {
+        await loadVlm({
+          onProgress: (frac, file) => {
+            if (dlBar) { dlBar.value = Math.round(frac); }
+            if (status) status.textContent = `Loading ${file?.split('/').pop() || 'weights'}… ${Math.round(frac)}%`;
+          },
+          onStatus: (s, file) => {
+            if (status) status.textContent = ({
+              init: 'Initialising SmolVLM…',
+              weights: 'Loading model weights…',
+              ready: 'SmolVLM ready · enter VR to use it.',
+            }[s]) || `${s}${file ? ' · ' + file.split('/').pop() : ''}`;
+          },
+        });
+        if (dlBar) dlBar.value = 100;
+        ready('SmolVLM ready · enter VR to capture a frame and describe it.');
+      } catch (e) {
+        console.error('[lens] VLM load failed:', e);
+        if (status) {
+          status.textContent = `VLM load failed (${e?.message || e}). Click "Skip model" to enter VR with mock answers.`;
+          status.style.color = '#f57b8a';
+        }
+        beginBtn.textContent = 'retry';
+        beginBtn.disabled = false;
+      }
+    });
+  }
 })();
