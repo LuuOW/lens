@@ -91,14 +91,31 @@ const FALLBACK_SKILLS = [
 ];
 
 // Demo mode — six curated skills, one per class. Independent of any LLM
-// response so a recording always shows every orbital signature.
+// response so a recording always shows every orbital signature. Each
+// entry includes a `parent` slug (so the post-pass can lock trojans/moons
+// to it) and a `star_affinity` triple (so the planet's hue blends from
+// the three system colours).
 const DEMO_SKILLS = [
-  { id: 'demo-planet',    name: 'persona-research',     class: 'planet',    score: 0.91, system: 'meridian-mcp', description: 'Build a source base for a person-specific voice model from public material — find, score, de-noise.' },
-  { id: 'demo-moon',      name: 'voice-cache',          class: 'moon',      score: 0.78, system: 'meridian-mcp', description: 'Lightweight cache satellites persona-research — local audio chunk store, tight loop around the parent.' },
-  { id: 'demo-trojan',    name: 'consent-archive',      class: 'trojan',    score: 0.72, system: 'meridian-mcp', description: 'Locked at L4 with persona-research — consent records share its orbital plane and period, leading by 60°.' },
-  { id: 'demo-asteroid',  name: 'transcript-clean',     class: 'asteroid',  score: 0.65, system: 'meridian-mcp', description: 'Fast small loop in the inner belt — quick transcript de-disfluency pass.' },
-  { id: 'demo-comet',     name: 'rare-language-router', class: 'comet',     score: 0.55, system: 'meridian-mcp', description: 'Long-period high-eccentricity router — rare-language coverage swooping through every ~75 s.' },
-  { id: 'demo-irregular', name: 'retro-corpus-mirror',  class: 'irregular', score: 0.48, system: 'meridian-mcp', description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
+  { id: 'demo-planet',    name: 'persona-research',     class: 'planet',    score: 0.91, system: 'meridian-mcp',
+    star_affinity: { forge: 0.20, signal: 0.35, mind: 0.85 },
+    description: 'Build a source base for a person-specific voice model from public material — find, score, de-noise.' },
+  { id: 'demo-moon',      name: 'voice-cache',          class: 'moon',      score: 0.78, system: 'meridian-mcp',
+    parent: 'demo-planet',
+    star_affinity: { forge: 0.65, signal: 0.05, mind: 0.30 },
+    description: 'Lightweight cache satellites persona-research — local audio chunk store, tight loop around the parent.' },
+  { id: 'demo-trojan',    name: 'consent-archive',      class: 'trojan',    score: 0.72, system: 'meridian-mcp',
+    parent: 'demo-planet',
+    star_affinity: { forge: 0.45, signal: 0.50, mind: 0.20 },
+    description: 'Locked at L4 with persona-research — consent records share its orbital plane and period, leading by 60°.' },
+  { id: 'demo-asteroid',  name: 'transcript-clean',     class: 'asteroid',  score: 0.65, system: 'meridian-mcp',
+    star_affinity: { forge: 0.30, signal: 0.10, mind: 0.55 },
+    description: 'Fast small loop in the inner belt — quick transcript de-disfluency pass.' },
+  { id: 'demo-comet',     name: 'rare-language-router', class: 'comet',     score: 0.55, system: 'meridian-mcp',
+    star_affinity: { forge: 0.10, signal: 0.65, mind: 0.40 },
+    description: 'Long-period high-eccentricity router — rare-language coverage swooping through every ~75 s.' },
+  { id: 'demo-irregular', name: 'retro-corpus-mirror',  class: 'irregular', score: 0.48, system: 'meridian-mcp',
+    star_affinity: { forge: 0.50, signal: 0.45, mind: 0.40 },
+    description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
 ];
 
 // Orbital mechanics — each celestial class the meridian skill router emits gets a distinct
@@ -191,6 +208,30 @@ const COL_TEXT_H   = 0xffa276;
 const COL_HINT      = 0x6e87b8;
 const COL_PLANETS   = [0x6ec3f4, 0xffa276, 0xb592e0, 0x69e2c4, 0xf3d27a];
 
+// Star-system base colors. The orbital classifier returns a star_affinity
+// triple per skill; we blend these three colors weighted by it so each
+// planet's hue reflects the systems it actually orbits between.
+//   forge  = devops/backend  → cool blue
+//   signal = growth/marketing → magenta
+//   mind   = AI/research      → amber
+const SYS_COL = {
+  forge:  new THREE.Color(0x6ec3f4),
+  signal: new THREE.Color(0xb592e0),
+  mind:   new THREE.Color(0xffa276),
+};
+const SYS_COL_FALLBACK = new THREE.Color(0x9bb6ea);
+
+function colorFromAffinity(aff) {
+  if (!aff) return null;
+  const wf = +aff.forge || 0, ws = +aff.signal || 0, wm = +aff.mind || 0;
+  const total = wf + ws + wm;
+  if (total < 0.01) return SYS_COL_FALLBACK.clone();
+  return new THREE.Color()
+    .add(SYS_COL.forge.clone().multiplyScalar(wf  / total))
+    .add(SYS_COL.signal.clone().multiplyScalar(ws / total))
+    .add(SYS_COL.mind.clone().multiplyScalar(wm   / total));
+}
+
 // ── State ───────────────────────────────────────────────────────────────
 const state = {
   scene:    null,
@@ -204,6 +245,7 @@ const state = {
   orbit:    [],          // planet meshes
   orbitRings: [],        // per-planet ellipse Lines (visible orbit traces)
   trails:   [],          // per-planet fading trail records
+  tethers:  [],          // trojan ↔ parent visible link lines
   starLayers: [],        // parallax + twinkle star Points groups
   physicsPanel: null,    // right-side hover info card
   detail:   null,        // { group, closeMesh }
@@ -399,7 +441,10 @@ function makePlanet(skill, i, n) {
       }
     : classExtras;
   const radius = 0.06 + score * 0.08;
-  const color = COL_PLANETS[i % COL_PLANETS.length];
+  // Per-skill colour from star_affinity if the classifier supplied one,
+  // otherwise the legacy index-rotating palette (FALLBACK_SKILLS path).
+  const affColor = colorFromAffinity(skill.star_affinity);
+  const color = affColor ? affColor.getHex() : COL_PLANETS[i % COL_PLANETS.length];
 
   const mesh = new THREE.Mesh(
     new THREE.IcosahedronGeometry(radius, 1),
@@ -472,6 +517,22 @@ function makeTrail(cls, color) {
   const line = new THREE.Line(geom, mat);
   line.frustumCulled = false; // trails span large arcs — false-cull bug otherwise
   return { line, positions, count: 0, N };
+}
+
+// Visible link line drawn between a trojan and its parent. Two vertices
+// (from, to) updated each frame from their current world positions so the
+// L4 60° lead is always anchored where the parent actually is.
+function makeTether(color) {
+  const positions = new Float32Array(6);
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.LineBasicMaterial({
+    color, transparent: true, opacity: 0.32,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const line = new THREE.Line(geom, mat);
+  line.frustumCulled = false;
+  return { line, positions };
 }
 
 function makeOrbitRing(elements, color = 0x9bb6ea) {
@@ -1030,6 +1091,11 @@ function spawnOrbit(skills) {
       // class lookup table. Falls back to undefined for FALLBACK_SKILLS,
       // which keeps the classElements() lookup as a default.
       orbital: raw.classification?.physics?.orbital,
+      // Star-system affinity drives the planet's hue (blend of the three
+      // base colors). Parent slug links trojans/moons to their primary,
+      // so trojans can lock to L4 and moons can orbit the parent itself.
+      star_affinity: raw.classification?.physics?.star_affinity,
+      parent: raw.classification?.parent || raw.parent || null,
     };
     const planet = makePlanet(sk, i, skills.length);
     state.scene.add(planet);
@@ -1060,6 +1126,64 @@ function spawnOrbit(skills) {
     trail.planet = planet;
     state.trails.push(trail);
   });
+
+  // Post-pass: lock trojans to their parent at Lagrange L4 (same orbit,
+  // 60° lead in mean anomaly), and mark moons to orbit their parent's
+  // current position rather than the user origin. The classifier already
+  // identified parents via Jaccard similarity (orbital.mjs:165–176);
+  // we just consume that here.
+  const planetBySlug = new Map();
+  state.orbit.forEach((p) => planetBySlug.set(p.userData.skill.id, p));
+
+  state.orbit.forEach((p, idx) => {
+    const parentSlug = p.userData.skill.parent;
+    if (!parentSlug) return;
+    const parent = planetBySlug.get(parentSlug);
+    if (!parent || parent === p) return;
+
+    if (p.userData.cls === 'trojan') {
+      const pe = parent.userData.elements;
+      p.userData.elements = {
+        a: pe.a, e: pe.e, i: pe.i,
+        omega: pe.omega, retrograde: pe.retrograde,
+      };
+      p.userData.M0 = parent.userData.M0 + Math.PI / 3;   // L4 lead
+      p.userData.parentRef = parent;
+
+      // Replace the orbit ring with one matching the parent's path (dimmer
+      // — the trojan rides the same orbit, no need for a second bright loop).
+      const oldRing = state.orbitRings[idx];
+      if (oldRing) {
+        state.scene.remove(oldRing);
+        oldRing.geometry.dispose(); oldRing.material.dispose();
+      }
+      const newRing = makeOrbitRing(p.userData.elements, p.userData.color);
+      newRing.material.opacity = 0.10;
+      state.orbitRings[idx] = newRing;
+      state.scene.add(newRing);
+
+      // Visible thread between trojan and parent — anchor for the eye.
+      const tether = makeTether(p.userData.color);
+      tether.from = p; tether.to = parent;
+      state.tethers.push(tether);
+      state.scene.add(tether.line);
+    } else if (p.userData.cls === 'moon') {
+      p.userData.parentRef = parent;
+      // Tighter orbit so the moon is visibly satelliting the parent
+      // rather than the user; cap eccentricity for a clean little ellipse.
+      p.userData.elements = {
+        ...p.userData.elements,
+        a: 0.32,
+        e: Math.min(0.30, p.userData.elements.e),
+      };
+      // The moon's orbit ring would have to follow the parent every frame
+      // to stay truthful — easier to hide it. The planet's own trail still
+      // communicates motion.
+      const r = state.orbitRings[idx];
+      if (r) r.visible = false;
+    }
+  });
+
   state.phase = 'orbit';
   setHint('aim a planet to inspect orbital elements', COL_TEXT);
 }
@@ -1098,6 +1222,12 @@ function clearOrbit() {
     t.line.material.dispose();
   });
   state.trails = [];
+  (state.tethers || []).forEach((t) => {
+    state.scene.remove(t.line);
+    t.line.geometry.dispose();
+    t.line.material.dispose();
+  });
+  state.tethers = [];
   hidePhysicsPanel();
 }
 
@@ -1283,8 +1413,22 @@ function onFrame(delta, _time, { controllers, camera }) {
   if (state.orbit.length) {
     const cam = camera.getWorldPosition(_o);
     state.orbit.forEach((p) => {
-      const pos = keplerPosition(p.userData.elements, tNow, p.userData.M0);
-      p.position.set(pos.x, pos.y + ORBIT_Y, pos.z);
+      const local = keplerPosition(p.userData.elements, tNow, p.userData.M0);
+      const parentRef = p.userData.parentRef;
+      if (p.userData.cls === 'moon' && parentRef) {
+        // Moon orbits its parent's CURRENT position, not the user origin.
+        // The parent has already had its position written this frame
+        // because state.orbit is iterated in spawn order and moons come
+        // after their parents in our routing data — but to be safe across
+        // any insertion order we read parentRef.position directly.
+        p.position.set(
+          parentRef.position.x + local.x,
+          parentRef.position.y + local.y,
+          parentRef.position.z + local.z,
+        );
+      } else {
+        p.position.set(local.x, local.y + ORBIT_Y, local.z);
+      }
       p.userData.label?.lookAt(cam);
     });
     for (const t of state.trails) {
@@ -1297,6 +1441,16 @@ function onFrame(delta, _time, { controllers, camera }) {
       t.line.geometry.attributes.position.needsUpdate = true;
       t.count = Math.min(t.count + 1, t.N);
       t.line.geometry.setDrawRange(t.N - t.count, t.count);
+    }
+    // Update trojan↔parent tethers from current positions.
+    for (const t of state.tethers) {
+      t.positions[0] = t.from.position.x;
+      t.positions[1] = t.from.position.y;
+      t.positions[2] = t.from.position.z;
+      t.positions[3] = t.to.position.x;
+      t.positions[4] = t.to.position.y;
+      t.positions[5] = t.to.position.z;
+      t.line.geometry.attributes.position.needsUpdate = true;
     }
   }
 
