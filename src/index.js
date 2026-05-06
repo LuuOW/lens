@@ -164,7 +164,11 @@ const NAV_Z = -Math.cos(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
 const PANEL_W       = 0.50;
 const PANEL_H       = 0.18;
 const ANSWER_Y      = 1.85;
-const ANSWER_DIST   = -1.6;
+// Sit on the same x²+z²=ARC_RADIUS² circle as the preset cards and
+// the route button. Was -1.6 (off-arc by 10 cm) which read as a
+// near-miss — the card looked subtly misaligned vs the rest of the
+// arc. Now r=ARC_RADIUS at the front-centre angle (0).
+const ANSWER_DIST   = -ARC_RADIUS;
 const ANSWER_W      = 1.1;
 const ANSWER_H      = 0.50;
 const ROUTE_Y       = 1.20;     // below the preset arc (CARD_Y=1.5) and the answer card (1.85)
