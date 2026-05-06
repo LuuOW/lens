@@ -18,7 +18,7 @@ const CANDIDATES = 5
 // Cross-origin import was hitting a 301 from luuow.github.io to
 // ask-meridian.uk that lost CORS headers; bundling avoids the redirect
 // and keeps lens fully self-contained.
-import { orbitalClassify as _orbitalClassify } from './orbital.mjs'
+import { orbitalClassify as _orbitalClassify } from './orbital.mjs?v=__BUILD_SHA__'
 
 // Token storage: localStorage on lens.ask-meridian.uk. The user pastes
 // it once at the gate; subsequent loads pick it up automatically.

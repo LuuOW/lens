@@ -18,9 +18,12 @@ import * as THREE from 'three';
 import { Text } from 'troika-three-text';
 import { XR_BUTTONS } from 'gamepad-wrapper';
 import gsap from 'gsap';
-import { init } from './init.js';
-import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs';
-import { route as routeViaGhModels, hasToken as hasGhToken, setToken as setGhToken, getToken as getGhToken } from './gh-models.mjs';
+// __BUILD_SHA__ is sed-replaced with the commit SHA at deploy time
+// (see .github/workflows/pages.yml) so each push produces brand-new
+// URLs for every module — Safari's disk cache can't serve stale code.
+import { init } from './init.js?v=__BUILD_SHA__';
+import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs?v=__BUILD_SHA__';
+import { route as routeViaGhModels, hasToken as hasGhToken, setToken as setGhToken, getToken as getGhToken } from './gh-models.mjs?v=__BUILD_SHA__';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
 // a scratch Color so we can call .setHex() once instead of allocating per tween.

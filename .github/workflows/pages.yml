@@ -29,13 +29,22 @@ jobs:
           {"ok":true,"name":"lens","host":"github-pages","commit":"${GITHUB_SHA:0:7}","run_id":"${GITHUB_RUN_ID}","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
           EOF
 
-      - name: Cache-bust index.js with commit SHA
+      - name: Cache-bust ALL module URLs with commit SHA
         run: |
           sha="${GITHUB_SHA:0:7}"
-          # Rewrite the __BUILD_SHA__ placeholder so each commit gets a fresh URL.
-          sed -i "s|__BUILD_SHA__|${sha}|g" src/index.html
-          grep -q "index.js?v=${sha}" src/index.html || (echo "cache-bust replace failed" && exit 1)
-          echo "✓ index.js?v=${sha}"
+          # Rewrite __BUILD_SHA__ in every file that imports a sibling
+          # module — index.html for the script tag plus the .js/.mjs
+          # files for their relative imports. Each commit becomes a
+          # fresh set of URLs across the bundle so no Safari disk-cache
+          # entry from an earlier commit can survive.
+          for f in src/index.html src/index.js src/gh-models.mjs src/orbital.mjs; do
+            sed -i "s|__BUILD_SHA__|${sha}|g" "$f"
+          done
+          grep -q "index.js?v=${sha}" src/index.html
+          grep -q "vlm.mjs?v=${sha}" src/index.js
+          grep -q "orbital.mjs?v=${sha}" src/gh-models.mjs
+          grep -q "tokenize.mjs?v=${sha}" src/orbital.mjs
+          echo "✓ all asset URLs at ${sha}"
 
       - uses: actions/configure-pages@v5
 
