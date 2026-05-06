@@ -301,22 +301,20 @@ function makeAnswerCard() {
   return group;
 }
 
-// Camera toggle button — front-right at azimuth +60° on the cards' arc,
-// rolled -30° around its local Z axis. Stays visible the whole session
-// and toggles its label between 'Allow' and 'Disable' based on whether
-// the MediaStream is currently active.
+// Camera toggle button — front-centre, on the cards' arc, sitting below
+// the route button. No roll. Visually it stacks under the primary 'Find
+// skills' action so the user always finds it without head-turn:
+//   answer card        y=1.85
+//   preset cards       y=1.50  (θ ∈ [-π/4, +π/4])
+//   route button       y=1.20  (θ=0)
+//   camera toggle      y=0.95  (θ=0)   ← here
 const CAMERA_COL_OFF = 0x4a2a14;          // amber — permission needed
 const CAMERA_COL_ON  = 0x1f4a26;          // green — camera live
+const CAMERA_BTN_Y   = 0.95;
 
 function makeCameraBtn() {
   const group = new THREE.Group();
-  const yaw  =  60 * Math.PI / 180;        // +60° clockwise from +Y around Y
-  const roll = -30 * Math.PI / 180;        // -30° from Z (local roll)
-  group.position.set(
-    Math.sin(yaw) * ARC_RADIUS,
-    1.40,
-    -Math.cos(yaw) * ARC_RADIUS,
-  );
+  group.position.set(0, CAMERA_BTN_Y, -ARC_RADIUS);
 
   const panel = new THREE.Mesh(
     new THREE.PlaneGeometry(0.62, 0.14),
@@ -331,8 +329,8 @@ function makeCameraBtn() {
   text.sync();
   group.add(text);
 
+  // Face the user (origin) without any roll — keep it upright.
   group.lookAt(0, group.position.y, 0);
-  group.rotateZ(roll);
   group.userData = { kind: 'camera-btn-group', panel, text };
   return group;
 }
