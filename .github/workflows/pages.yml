@@ -29,6 +29,14 @@ jobs:
           {"ok":true,"name":"lens","host":"github-pages","commit":"${GITHUB_SHA:0:7}","run_id":"${GITHUB_RUN_ID}","built_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
           EOF
 
+      - name: Cache-bust index.js with commit SHA
+        run: |
+          sha="${GITHUB_SHA:0:7}"
+          # Rewrite the __BUILD_SHA__ placeholder so each commit gets a fresh URL.
+          sed -i "s|__BUILD_SHA__|${sha}|g" src/index.html
+          grep -q "index.js?v=${sha}" src/index.html || (echo "cache-bust replace failed" && exit 1)
+          echo "✓ index.js?v=${sha}"
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3

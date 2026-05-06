@@ -381,6 +381,9 @@
         });
       })();
     </script>
-    <script type="module" src="./index.js?v=vlm-1"></script>
+    <!-- Cache-bust query is rewritten to the short commit SHA at deploy
+         time by .github/workflows/pages.yml (sed). Local dev keeps
+         "dev" so unbumped reloads hit the same URL. -->
+    <script type="module" src="./index.js?v=__BUILD_SHA__"></script>
   </body>
 </html>
