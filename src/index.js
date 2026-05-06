@@ -715,6 +715,60 @@ function setupScene({ scene, renderer, player }) {
 
   scene.add(new THREE.GridHelper(20, 20, 0x223052, 0x1a2438));
 
+  // ── Axis + degree reference (debug-only, toggle via ?axes=0) ────────
+  // Visible XYZ axes at world origin and a degree ring on the cards'
+  // R=ARC_RADIUS circle, ticked every 30°. Useful for communicating
+  // spatial changes precisely ("move it to -75°", "tilt around Z by 50").
+  // X=red (+X right), Y=green (+Y up), Z=blue (+Z back; -Z is forward).
+  // Angle convention matches makeCard's: ang = sin/-cos, 0° = front,
+  // positive = clockwise from above (right side), negative = left.
+  if (new URL(location.href).searchParams.get('axes') !== '0') {
+    const axes = new THREE.AxesHelper(0.8);
+    axes.position.set(0, 0.005, 0);
+    scene.add(axes);
+
+    const labelOpts = (color) => ({ size: 0.05, color });
+    const xL = makeText('+X', labelOpts(0xff7878));   xL.position.set(0.88, 0.05, 0);    xL.sync(); scene.add(xL);
+    const yL = makeText('+Y', labelOpts(0x9aff9a));   yL.position.set(0, 0.88, 0);       yL.sync(); scene.add(yL);
+    const zL = makeText('+Z (back)', labelOpts(0x9abbff)); zL.position.set(0, 0.05, 0.88); zL.lookAt(0, 0.05, 0); zL.sync(); scene.add(zL);
+    const fL = makeText('-Z (front, 0°)', labelOpts(0x9abbff)); fL.position.set(0, 0.05, -0.88); fL.lookAt(0, 0.05, 0); fL.sync(); scene.add(fL);
+
+    // Floor ring on the cards' R=ARC_RADIUS circle.
+    const segs = 96;
+    const ringPts = new Float32Array((segs + 1) * 3);
+    for (let i = 0; i <= segs; i++) {
+      const a = (i / segs) * Math.PI * 2;
+      ringPts[i * 3]     = Math.sin(a) * ARC_RADIUS;
+      ringPts[i * 3 + 1] = 0.006;
+      ringPts[i * 3 + 2] = -Math.cos(a) * ARC_RADIUS;
+    }
+    const ringGeom = new THREE.BufferGeometry();
+    ringGeom.setAttribute('position', new THREE.BufferAttribute(ringPts, 3));
+    scene.add(new THREE.LineLoop(ringGeom, new THREE.LineBasicMaterial({
+      color: 0x4a5878, transparent: true, opacity: 0.55,
+    })));
+
+    // Degree ticks + labels every 30°. 0° = front (-Z), positive = right.
+    for (let deg = -180; deg < 180; deg += 30) {
+      const a = deg * Math.PI / 180;
+      const x = Math.sin(a) * ARC_RADIUS;
+      const z = -Math.cos(a) * ARC_RADIUS;
+      const tickGeom = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(x * 0.96, 0.006, z * 0.96),
+        new THREE.Vector3(x * 1.06, 0.006, z * 1.06),
+      ]);
+      scene.add(new THREE.Line(tickGeom, new THREE.LineBasicMaterial({
+        color: 0x8aa0c8, transparent: true, opacity: 0.75,
+      })));
+      const txt = `${deg > 0 ? '+' : ''}${deg}°`;
+      const label = makeText(txt, { size: 0.04, color: 0x9bb6ea });
+      label.position.set(x * 1.13, 0.02, z * 1.13);
+      label.lookAt(0, 0.02, 0);
+      label.sync();
+      scene.add(label);
+    }
+  }
+
   PRESETS.forEach((preset, i) => {
     const t = PRESETS.length === 1 ? 0.5 : i / (PRESETS.length - 1);
     const ang = -ARC_SPAN / 2 + t * ARC_SPAN;
