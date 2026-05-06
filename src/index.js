@@ -718,8 +718,6 @@ function startSelection(presetId) {
   state.selected = preset;
   state.shown = 0;
   state.full = '';
-  state.thinkStart = performance.now();
-  state.phase = 'thinking';
 
   state.answer.userData.title.text = preset.label;
   state.answer.userData.title.sync();
@@ -732,14 +730,18 @@ function startSelection(presetId) {
   state.route.visible = false;
   setHint('looking…', COL_TEXT_H);
 
-  // Real VLM path — capture a frame and stream tokens. Falls back to the
-  // mock string only if the model never loaded (skip path / unsupported).
+  // Real VLM path — capture a frame and stream tokens. The 'vlm' phase
+  // intentionally bypasses streamTick() so the mock stream's auto-advance
+  // doesn't race the async inference.
   if (isVlmReady()) {
+    state.phase = 'vlm';
     runVlmInference(preset).catch((e) => {
       console.warn('[lens] VLM failed, falling back to mock:', e);
       runMockStream(preset);
     });
   } else {
+    state.phase = 'thinking';
+    state.thinkStart = performance.now();
     runMockStream(preset);
   }
 }

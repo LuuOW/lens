@@ -227,6 +227,13 @@ export async function describeImage(image, prompt, { onToken, signal, maxTokens 
     ...inputs,
     max_new_tokens: maxTokens,
     do_sample: false,
+    // SmolVLM-256M with greedy decoding likes to loop on phrases ('I see,
+    // I see, I see…'). repetition_penalty drags the logits of recently
+    // seen tokens down; no_repeat_ngram_size hard-bans any 3-gram from
+    // appearing twice. Together they kill the loops without giving up
+    // determinism (do_sample stays false so the demo is reproducible).
+    repetition_penalty: 1.3,
+    no_repeat_ngram_size: 3,
     streamer,
   })
 
