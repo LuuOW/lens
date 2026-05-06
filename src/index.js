@@ -70,7 +70,13 @@ const NAV_LINKS = [
   { label: '▶ Demo',         url: '__demo__' },
   { label: '✕ Exit VR',     url: '__exit__' },
 ];
-const NAV_X      = -1.55;
+// Nav rail sits on the SAME arc as the preset cards (radius 1.5), one
+// "slot" left of the leftmost preset (-π/4) to maintain a visible gap.
+// −π/3 puts the rail at x≈-1.30, z≈-0.75 — clearly separated, on-curve.
+const NAV_ARC_ANGLE = -Math.PI / 3;
+const NAV_ARC_RADIUS = 1.5;
+const NAV_X      = Math.sin(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
+const NAV_Z      = -Math.cos(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
 const NAV_Y_TOP  = 1.85;
 const NAV_GAP    = 0.16;
 const NAV_W      = 0.70;
@@ -542,7 +548,7 @@ function makeDetailCard(skill) {
 
 function makeNavLink(item, i) {
   const group = new THREE.Group();
-  group.position.set(NAV_X, NAV_Y_TOP - i * NAV_GAP, -1.0);
+  group.position.set(NAV_X, NAV_Y_TOP - i * NAV_GAP, NAV_Z);
 
   const isCurrent  = !!item.current;
   const isExit     = item.url === '__exit__';
