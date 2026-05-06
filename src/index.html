@@ -379,6 +379,14 @@
         window.addEventListener('unhandledrejection', function (e) {
           out('Unhandled rejection: ' + (e.reason?.message || e.reason || 'unknown'));
         });
+        // Pin SmolVLM weights + esm.sh modules across cache clears.
+        // Registered before any module fetch so the SW is in control of
+        // huggingface.co + esm.sh requests once it's claimed clients.
+        if ('serviceWorker' in navigator) {
+          navigator.serviceWorker.register('./sw.js').catch(function (e) {
+            console.warn('[lens] SW registration failed:', e);
+          });
+        }
       })();
     </script>
     <!-- Cache-bust query is rewritten to the short commit SHA at deploy

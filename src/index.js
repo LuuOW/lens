@@ -70,11 +70,13 @@ const NAV_LINKS = [
   { label: '▶ Demo',         url: '__demo__' },
   { label: '✕ Exit VR',     url: '__exit__' },
 ];
-// Nav rail sits on the SAME arc as the preset cards (radius 1.5), one
-// "slot" left of the leftmost preset (-π/4) to maintain a visible gap.
-// −π/3 puts the rail at x≈-1.30, z≈-0.75 — clearly separated, on-curve.
-const NAV_ARC_ANGLE = -Math.PI / 3;
-const NAV_ARC_RADIUS = 1.5;
+// Nav rail on the same circle as the preset cards (radius 1.5). Pushed
+// to ~-72° (-1.25 rad) so the angular separation from the leftmost card
+// (-π/4 = -45°) is a clear 27° instead of the original 15°. On the
+// circle that puts it at x≈-1.42, z≈-0.46 — visibly off-arc-end but
+// still on-curve.
+const NAV_ARC_ANGLE = -1.25;
+const NAV_ARC_RADIUS = ARC_RADIUS;
 const NAV_X      = Math.sin(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
 const NAV_Z      = -Math.cos(NAV_ARC_ANGLE) * NAV_ARC_RADIUS;
 const NAV_Y_TOP  = 1.85;
@@ -165,7 +167,10 @@ const ANSWER_DIST   = -1.6;
 const ANSWER_W      = 1.1;
 const ANSWER_H      = 0.50;
 const ROUTE_Y       = 1.20;     // below the preset arc (CARD_Y=1.5) and the answer card (1.85)
-const ROUTE_DIST    = -0.95;    // closer to user than ARC_RADIUS (1.5) — never occluded by preset cards
+// Sit on the same circle x²+z²=ARC_RADIUS² as the preset cards, at angle 0
+// (front-centre — between activity at θ=-π/20 and objects at θ=+π/20).
+// Y is below the cards' plane so it never collides with their footprint.
+const ROUTE_DIST    = -ARC_RADIUS;
 const ORBIT_RADIUS  = 2.0;
 const ORBIT_Y       = 1.55;
 
