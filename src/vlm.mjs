@@ -236,14 +236,17 @@ export async function describeImage(image, prompt, { onToken, signal, maxTokens 
   await model.generate({
     ...inputs,
     max_new_tokens: maxTokens,
-    do_sample: false,
-    // SmolVLM-256M with greedy decoding likes to loop on phrases ('I see,
-    // I see, I see…'). repetition_penalty drags the logits of recently
-    // seen tokens down; no_repeat_ngram_size hard-bans any 3-gram from
-    // appearing twice. Together they kill the loops without giving up
-    // determinism (do_sample stays false so the demo is reproducible).
-    repetition_penalty: 1.3,
-    no_repeat_ngram_size: 3,
+    // Match HuggingFace's reference config for SmolVLM-256M: sampling
+    // with low temperature. The previous greedy + repetition_penalty=1.3
+    // + no_repeat_ngram_size=3 combination killed phrase loops but warped
+    // the model's outputs into semantically wrong territory — the
+    // n-gram ban prohibits common captioning trigrams ('the X is',
+    // 'with a X'), forcing the greedy path into unrelated tokens.
+    // Sampling with temperature=0.5 avoids the loops naturally.
+    do_sample: true,
+    temperature: 0.5,
+    top_p: 0.9,
+    repetition_penalty: 1.0,
     streamer,
   })
 
