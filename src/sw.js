@@ -34,15 +34,17 @@ self.addEventListener('fetch', (event) => {
     if (cached) return cached;
     try {
       const res = await fetch(event.request);
-      // Only cache successful, non-opaque responses. Opaque (no-cors)
-      // responses are storable but `Response` clone+put can throw with
-      // some Range responses; guard accordingly.
-      if (res.ok && res.type !== 'opaque') {
-        try { await cache.put(event.request, res.clone()); } catch {}
+      // Only cache successful, non-opaque, non-partial responses.
+      // CRUCIAL: do NOT await cache.put — that would buffer the
+      // entire 200 MB body before returning the response to
+      // transformers.js, which then sees zero progress for minutes.
+      // Cloning forks the stream; cache.put reads its fork in
+      // parallel with the consumer reading the original.
+      if (res.ok && res.type !== 'opaque' && res.status !== 206) {
+        cache.put(event.request, res.clone()).catch(() => {});
       }
       return res;
     } catch (e) {
-      // Network failure with no cache hit: surface a clear error.
       return new Response(`Network failed for ${url.href}`, { status: 599 });
     }
   })());

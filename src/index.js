@@ -1321,8 +1321,11 @@ async function runCapabilityChecks() {
       try {
         await loadVlm({
           onProgress: (frac, file) => {
-            if (dlBar) { dlBar.value = Math.round(frac); }
-            if (status) status.textContent = `Loading ${file?.split('/').pop() || 'weights'}… ${Math.round(frac)}%`;
+            // transformers.js v3 reports 'progress' as 0-100, but be
+            // defensive — older builds emit 0-1.
+            const pct = frac > 1 ? Math.round(frac) : Math.round(frac * 100);
+            if (dlBar) dlBar.value = pct;
+            if (status) status.textContent = `Loading ${file?.split('/').pop() || 'weights'}… ${pct}%`;
           },
           onStatus: (s, file) => {
             if (status) status.textContent = ({
