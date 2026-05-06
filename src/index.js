@@ -375,11 +375,32 @@ function makeRouteButton() {
   return group;
 }
 
+// Map the classifier's a∈[1,7] (heavy/broad/independent → close orbit;
+// light/dependent → far) into the visualization's working range [0.7, 3.2]
+// so distinct skills get distinct rings without flying past the user's view.
+function rescaleA(a_phys) {
+  const a = Math.max(1, Math.min(7, a_phys));
+  return 0.7 + ((a - 1) / 6) * (3.2 - 0.7);
+}
+
 function makePlanet(skill, i, n) {
   const score = Math.max(0, Math.min(1, +skill.score || 0.5));
   const cls   = skill.class || 'planet';
-  const elements = classElements(cls);
-  const radius = 0.06 + score * 0.08;     // sphere visual size
+  // Class table contributes only the dynamical hints the physics scalars
+  // don't encode: argument of periapsis (60° trojan offset for Lagrange L4)
+  // and the retrograde flag for irregular skills.
+  const classExtras = classElements(cls);
+  const o = skill.orbital;
+  const elements = o
+    ? {
+        a:          rescaleA(o.semi_major_axis),
+        e:          Math.max(0, Math.min(0.95, o.eccentricity)),
+        i:          Math.max(0, Math.min(Math.PI / 2, o.inclination)),
+        omega:      classExtras.omega,
+        retrograde: classExtras.retrograde,
+      }
+    : classExtras;
+  const radius = 0.06 + score * 0.08;
   const color = COL_PLANETS[i % COL_PLANETS.length];
 
   const mesh = new THREE.Mesh(
@@ -390,8 +411,10 @@ function makePlanet(skill, i, n) {
     }),
   );
 
-  // Random initial mean anomaly so co-class planets don't bunch at periapsis.
-  const M0 = Math.random() * Math.PI * 2;
+  // Use the classifier's deterministic mean_anomaly (slug-hashed) when
+  // present so the same skill always materialises in the same orbital
+  // phase. Falls back to random for FALLBACK_SKILLS.
+  const M0 = o?.mean_anomaly ?? Math.random() * Math.PI * 2;
   const p0 = keplerPosition(elements, 0, M0);
   mesh.position.set(p0.x, p0.y + ORBIT_Y, p0.z);
   mesh.userData = {
@@ -988,9 +1011,10 @@ async function routeAndOrbit() {
 
 function spawnOrbit(skills) {
   clearOrbit();
-  // /api/orbital-route nests classification + uses route_score; FALLBACK_SKILLS
-  // is flat with score in 0..1. Read both. route_score is unbounded (≈0..200+),
-  // so normalize against the batch max when it overflows the 0..1 visual range.
+  // The MCP / GitHub-Models pipeline returns nested classification + route_score;
+  // FALLBACK_SKILLS is the flat demo shape with score in 0..1. Read both.
+  // route_score is unbounded (≈0..200+), so normalize against the batch max
+  // when it overflows the 0..1 visual range.
   const rawScores = skills.map(s => +s.route_score || +s.score || +s.match || 0);
   const maxRaw = Math.max(0.0001, ...rawScores);
   const needsNormalize = maxRaw > 1.5;
@@ -1003,6 +1027,11 @@ function spawnOrbit(skills) {
       score: needsNormalize ? rawScore / maxRaw : rawScore,
       system: raw.classification?.star_system || raw.system || raw.system_id || raw.provider || '',
       description: raw.description || raw.summary || raw.body || '',
+      // Preserve the classifier's per-skill orbital elements so the
+      // visualization shows the actual physics it computed instead of a
+      // class lookup table. Falls back to undefined for FALLBACK_SKILLS,
+      // which keeps the classElements() lookup as a default.
+      orbital: raw.classification?.physics?.orbital,
     };
     const planet = makePlanet(sk, i, skills.length);
     state.scene.add(planet);
