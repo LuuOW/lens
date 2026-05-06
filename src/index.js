@@ -1394,14 +1394,11 @@ async function runCapabilityChecks() {
           },
         });
         if (dlBar) dlBar.value = 100;
-        if (status) status.textContent = 'SmolVLM ready · requesting camera…';
-        try {
-          await requestCamera({ facingMode: 'environment' });
-          ready('Camera + VLM ready · enter VR. The trigger captures from your camera.');
-        } catch (e) {
-          console.warn('[lens] camera unavailable, scene-capture fallback:', e);
-          ready('VLM ready · camera denied/unavailable, will describe the rendered VR scene.');
-        }
+        // Don't request camera here — defer to the in-VR 'Allow camera'
+        // button so the OS prompt fires inside the demo flow, not on
+        // the gate. The button at azimuth +120° is the explicit
+        // user-controlled trigger.
+        ready('SmolVLM ready · enter VR · use the in-scene Allow Camera button to grant access.');
       } catch (e) {
         console.error('[lens] VLM load failed:', e);
         if (status) {
