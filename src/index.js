@@ -19,7 +19,7 @@ import { Text } from 'troika-three-text';
 import { XR_BUTTONS } from 'gamepad-wrapper';
 import gsap from 'gsap';
 import { init } from './init.js';
-import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs';
+import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs';
 import { route as routeViaGhModels, hasToken as hasGhToken, setToken as setGhToken, getToken as getGhToken } from './gh-models.mjs';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
@@ -298,15 +298,17 @@ function makeAnswerCard() {
   return group;
 }
 
-// "Allow camera" button placed off to the user's right-and-back at
-// azimuth +120° (clockwise around Y from -Z forward), on the same
-// ARC_RADIUS circle as the cards. After lookAt() faces the user, a
-// rotateZ in the local frame rolls the panel 50° around its facing
-// axis. Visible only until requestCamera() succeeds.
+// Camera toggle button — front-right at azimuth +60° on the cards' arc,
+// rolled -30° around its local Z axis. Stays visible the whole session
+// and toggles its label between 'Allow' and 'Disable' based on whether
+// the MediaStream is currently active.
+const CAMERA_COL_OFF = 0x4a2a14;          // amber — permission needed
+const CAMERA_COL_ON  = 0x1f4a26;          // green — camera live
+
 function makeCameraBtn() {
   const group = new THREE.Group();
-  const yaw = 120 * Math.PI / 180;          // azimuth from -Z forward
-  const roll = 50 * Math.PI / 180;          // local-Z roll after lookAt
+  const yaw  =  60 * Math.PI / 180;        // +60° clockwise from +Y around Y
+  const roll = -30 * Math.PI / 180;        // -30° from Z (local roll)
   group.position.set(
     Math.sin(yaw) * ARC_RADIUS,
     1.40,
@@ -315,10 +317,10 @@ function makeCameraBtn() {
 
   const panel = new THREE.Mesh(
     new THREE.PlaneGeometry(0.62, 0.14),
-    frontMaterial(0x4a2a14, 0.96),          // amber — reads as "permission needed"
+    frontMaterial(CAMERA_COL_OFF, 0.96),
   );
-  panel.userData.kind = 'camera-grant';
-  panel.userData.baseColor = 0x4a2a14;
+  panel.userData.kind = 'camera-toggle';
+  panel.userData.baseColor = CAMERA_COL_OFF;
   group.add(panel);
 
   const text = makeText('🎥 Allow camera', { size: 0.045, color: 0xffd1a3 });
@@ -326,11 +328,24 @@ function makeCameraBtn() {
   text.sync();
   group.add(text);
 
-  group.lookAt(0, group.position.y, 0);     // face the user
-  group.rotateZ(roll);                      // 50° roll in local frame
-  group.visible = !isCameraReady();
+  group.lookAt(0, group.position.y, 0);
+  group.rotateZ(roll);
   group.userData = { kind: 'camera-btn-group', panel, text };
   return group;
+}
+
+// Refresh the toggle's label + base colour to match current camera state.
+function refreshCameraBtn() {
+  const g = state.cameraBtn;
+  if (!g) return;
+  const live = isCameraReady();
+  const baseColor = live ? CAMERA_COL_ON : CAMERA_COL_OFF;
+  g.userData.panel.userData.baseColor = baseColor;
+  g.userData.panel.material.color.setHex(baseColor);
+  g.userData.text.text = live ? '🛑 Disable camera' : '🎥 Allow camera';
+  g.userData.text.color = live ? 0xc6f3c7 : 0xffd1a3;
+  g.userData.text.material.color.setHex(g.userData.text.color);
+  g.userData.text.sync();
 }
 
 function makeRouteButton() {
@@ -1122,16 +1137,22 @@ function handleClick(panel) {
     setHint('aim a planet to inspect', COL_TEXT);
   } else if (k === 'physics-close') {
     hidePhysicsPanel();
-  } else if (k === 'camera-grant') {
-    setHint('check the browser window for the camera prompt', COL_TEXT_H);
-    requestCamera({ facingMode: 'environment' })
-      .then(() => {
-        if (state.cameraBtn) state.cameraBtn.visible = false;
-        setHint('camera granted ✓', COL_TEXT);
-      })
-      .catch((e) => {
-        setHint('camera denied: ' + (e.message || e), COL_HINT);
-      });
+  } else if (k === 'camera-toggle') {
+    if (isCameraReady()) {
+      stopCamera();
+      refreshCameraBtn();
+      setHint('camera disabled', COL_TEXT);
+    } else {
+      setHint('check the browser window for the camera prompt', COL_TEXT_H);
+      requestCamera({ facingMode: 'environment' })
+        .then(() => {
+          refreshCameraBtn();
+          setHint('camera granted ✓', COL_TEXT);
+        })
+        .catch((e) => {
+          setHint('camera denied: ' + (e.message || e), COL_HINT);
+        });
+    }
   } else if (k === 'navlink') {
     const url = panel.userData.url;
     if (url === '__exit__') {

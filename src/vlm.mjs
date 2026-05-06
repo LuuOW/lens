@@ -104,6 +104,16 @@ export function isCameraReady() {
   return !!(_cameraVideo && _cameraStream?.active)
 }
 
+export function stopCamera() {
+  try { _cameraStream?.getTracks?.().forEach(t => t.stop()) } catch {}
+  if (_cameraVideo) {
+    try { _cameraVideo.srcObject = null } catch {}
+    try { _cameraVideo.remove() } catch {}
+  }
+  _cameraStream = null
+  _cameraVideo = null
+}
+
 const _camCanvas = (typeof OffscreenCanvas !== 'undefined')
   ? new OffscreenCanvas(384, 384)
   : Object.assign(document.createElement('canvas'), { width: 384, height: 384 })
