@@ -14,13 +14,11 @@ const MODEL    = 'meta/llama-3.3-70b-instruct'
 const PKG_VER  = 'lens-vlm-1'
 const CANDIDATES = 5
 
-const ORBITAL_URL = 'https://luuow.github.io/meridian-mcp/_lib/orbital.mjs'
-let _orbitalPromise = null
-function loadOrbital() {
-  if (_orbitalPromise) return _orbitalPromise
-  _orbitalPromise = import(/* @vite-ignore */ ORBITAL_URL)
-  return _orbitalPromise
-}
+// Orbital classifier bundled into lens (mirror of meridian-mcp/landing/_lib).
+// Cross-origin import was hitting a 301 from luuow.github.io to
+// ask-meridian.uk that lost CORS headers; bundling avoids the redirect
+// and keeps lens fully self-contained.
+import { orbitalClassify as _orbitalClassify } from './orbital.mjs'
 
 // Token storage: localStorage on lens.ask-meridian.uk. The user pastes
 // it once at the gate; subsequent loads pick it up automatically.
@@ -101,12 +99,8 @@ export async function route({ task, limit = 5, signal } = {}) {
   const token = getToken()
   if (!token) throw new Error('GitHub PAT required (lens.github_token in localStorage). Set one at the gate.')
 
-  const [{ orbitalClassify }, candidates] = await Promise.all([
-    loadOrbital(),
-    generateCandidates(task, token, signal),
-  ])
-
-  const ranked = orbitalClassify(candidates, task)
+  const candidates = await generateCandidates(task, token, signal)
+  const ranked = _orbitalClassify(candidates, task)
   const top = ranked.slice(0, Math.max(1, Math.min(20, limit)))
   const top_score = top[0]?.route_score || 0
   return {
