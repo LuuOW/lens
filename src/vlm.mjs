@@ -56,7 +56,81 @@ export function isVlmReady() {
   return !!_modelPromise
 }
 
-// ── Frame capture ──────────────────────────────────────────────────────
+// ── Webcam capture ─────────────────────────────────────────────────────
+// Preferred path: real camera via getUserMedia. Returns a hidden <video>
+// element with the stream wired up. Idempotent — repeated calls return the
+// existing stream. Throws if the user denies permission or no device.
+
+let _cameraStream = null
+let _cameraVideo = null
+
+export async function requestCamera({ facingMode = 'environment' } = {}) {
+  if (_cameraVideo && _cameraStream?.active) return _cameraVideo
+  if (!navigator.mediaDevices?.getUserMedia)
+    throw new Error('getUserMedia not supported')
+
+  // 'environment' (rear) is preferred for the AR-style demo, but most
+  // laptops only expose a 'user' (front) camera; fall back automatically.
+  let stream
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facingMode }, width: 1280, height: 720 },
+      audio: false,
+    })
+  } catch {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: true, audio: false,
+    })
+  }
+  _cameraStream = stream
+
+  const video = document.createElement('video')
+  video.autoplay = true
+  video.playsInline = true
+  video.muted = true
+  video.srcObject = stream
+  video.style.cssText = 'position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;'
+  document.body.appendChild(video)
+  await new Promise((res) => {
+    if (video.readyState >= 2) return res()
+    video.addEventListener('loadeddata', res, { once: true })
+  })
+  await video.play().catch(() => {})
+  _cameraVideo = video
+  return video
+}
+
+export function isCameraReady() {
+  return !!(_cameraVideo && _cameraStream?.active)
+}
+
+const _camCanvas = (typeof OffscreenCanvas !== 'undefined')
+  ? new OffscreenCanvas(384, 384)
+  : Object.assign(document.createElement('canvas'), { width: 384, height: 384 })
+
+export function captureCameraFrame(size = 384) {
+  if (!_cameraVideo) throw new Error('camera not requested')
+  if (_camCanvas.width !== size) { _camCanvas.width = size; _camCanvas.height = size }
+  const ctx = _camCanvas.getContext('2d')
+
+  // Cover-fit: crop the video to a centered square then scale to size×size.
+  const vw = _cameraVideo.videoWidth, vh = _cameraVideo.videoHeight
+  const side = Math.min(vw, vh)
+  const sx = (vw - side) / 2, sy = (vh - side) / 2
+  ctx.drawImage(_cameraVideo, sx, sy, side, side, 0, 0, size, size)
+
+  const data = ctx.getImageData(0, 0, size, size).data
+  // RGBA → RGB
+  const rgb = new Uint8ClampedArray(size * size * 3)
+  for (let i = 0, j = 0; i < data.length; i += 4, j += 3) {
+    rgb[j]     = data[i]
+    rgb[j + 1] = data[i + 1]
+    rgb[j + 2] = data[i + 2]
+  }
+  return new RawImage(rgb, size, size, 3)
+}
+
+// ── Scene capture (fallback) ───────────────────────────────────────────
 // Render the live scene from the player's head position to a 384×384
 // offscreen target. Works during an active XR session (separate render
 // pass; doesn't disturb the XR display). Pixels come back upside-down from

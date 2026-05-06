@@ -19,7 +19,7 @@ import { Text } from 'troika-three-text';
 import { XR_BUTTONS } from 'gamepad-wrapper';
 import gsap from 'gsap';
 import { init } from './init.js';
-import { loadVlm, captureSceneFrame, describeImage, isVlmReady } from './vlm.mjs';
+import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
 // a scratch Color so we can call .setHex() once instead of allocating per tween.
@@ -158,7 +158,8 @@ const ANSWER_Y      = 1.85;
 const ANSWER_DIST   = -1.6;
 const ANSWER_W      = 1.1;
 const ANSWER_H      = 0.50;
-const ROUTE_Y       = ANSWER_Y - 0.40;
+const ROUTE_Y       = 1.20;     // below the preset arc (CARD_Y=1.5) and the answer card (1.85)
+const ROUTE_DIST    = -0.95;    // closer to user than ARC_RADIUS (1.5) — never occluded by preset cards
 const ORBIT_RADIUS  = 2.0;
 const ORBIT_Y       = 1.55;
 
@@ -283,23 +284,25 @@ function makeAnswerCard() {
 
 function makeRouteButton() {
   const group = new THREE.Group();
-  group.position.set(0, ROUTE_Y, ANSWER_DIST + 0.02);
+  group.position.set(0, ROUTE_Y, ROUTE_DIST);
 
+  // Larger, brighter button — it's now the primary call-to-action after
+  // the VLM streams its description and we want it impossible to miss.
   const panel = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.55, 0.10),
-    frontMaterial(0x1f2740, 0.95),
+    new THREE.PlaneGeometry(0.70, 0.13),
+    frontMaterial(0x2d2160, 0.96),
   );
   panel.userData.kind = 'route';
   group.add(panel);
 
-  const text = makeText('Find skills →', { size: 0.038, color: COL_TEXT_H });
+  const text = makeText('Find skills →', { size: 0.05, color: COL_TEXT_H });
   text.position.z = 0.002;
   text.sync();
   group.add(text);
 
   group.lookAt(0, ROUTE_Y, 0);
   group.visible = false;
-  group.userData = { kind: 'route-group', panel, text, originalColor: 0x1f2740 };
+  group.userData = { kind: 'route-group', panel, text, originalColor: 0x2d2160 };
   return group;
 }
 
@@ -742,21 +745,28 @@ function startSelection(presetId) {
 }
 
 async function runVlmInference(preset) {
-  let image;
-  try {
-    image = captureSceneFrame({
-      renderer: state.renderer,
-      scene:    state.scene,
-      player:   state.player,
-    });
-  } catch (e) {
-    console.warn('[lens] frame capture failed:', e);
-    return runMockStream(preset);
+  let image, source = 'scene'
+  // Prefer real camera; fall back to scene capture if unavailable/denied.
+  if (isCameraReady()) {
+    try { image = captureCameraFrame(384); source = 'camera' }
+    catch (e) { console.warn('[lens] camera capture failed:', e) }
+  }
+  if (!image) {
+    try {
+      image = captureSceneFrame({
+        renderer: state.renderer,
+        scene:    state.scene,
+        player:   state.player,
+      });
+    } catch (e) {
+      console.warn('[lens] frame capture failed:', e);
+      return runMockStream(preset);
+    }
   }
 
-  state.answer.userData.meta.text = 'SmolVLM · WebGPU';
+  state.answer.userData.meta.text = `SmolVLM · ${source}`;
   state.answer.userData.meta.sync();
-  setHint('describing what you see…', COL_TEXT_H);
+  setHint(source === 'camera' ? 'looking through your camera…' : 'describing the scene…', COL_TEXT_H);
 
   await describeImage(image, preset.prompt, {
     onToken: (full) => {
@@ -1214,7 +1224,14 @@ async function runCapabilityChecks() {
           },
         });
         if (dlBar) dlBar.value = 100;
-        ready('SmolVLM ready · enter VR to capture a frame and describe it.');
+        if (status) status.textContent = 'SmolVLM ready · requesting camera…';
+        try {
+          await requestCamera({ facingMode: 'environment' });
+          ready('Camera + VLM ready · enter VR. The trigger captures from your camera.');
+        } catch (e) {
+          console.warn('[lens] camera unavailable, scene-capture fallback:', e);
+          ready('VLM ready · camera denied/unavailable, will describe the rendered VR scene.');
+        }
       } catch (e) {
         console.error('[lens] VLM load failed:', e);
         if (status) {
