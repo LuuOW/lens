@@ -20,6 +20,7 @@ import { XR_BUTTONS } from 'gamepad-wrapper';
 import gsap from 'gsap';
 import { init } from './init.js';
 import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs';
+import { route as routeViaGhModels, hasToken as hasGhToken, setToken as setGhToken, getToken as getGhToken } from './gh-models.mjs';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
 // a scratch Color so we can call .setHex() once instead of allocating per tween.
@@ -871,21 +872,40 @@ async function routeAndOrbit() {
   state.routeBusy = true;
   state.phase = 'routing';
   state.route.visible = false;
-  setHint('routing locally via meridian edge router…', COL_TEXT_H);
+
+  if (!hasGhToken()) {
+    setHint('Set a GitHub PAT (Models: read) at the gate to route skills', COL_HINT);
+    state.routeBusy = false;
+    state.phase = 'answer';
+    state.route.visible = true;
+    return;
+  }
+
+  setHint('Llama-3.3-70B authoring fresh skills via GitHub Models…', COL_TEXT_H);
 
   let skills = [];
   try {
-    const { route } = await import(/* @vite-ignore */ ROUTER_MODULE);
-    const data = await route({
-      task:      state.full.slice(0, 500),
-      limit:     5,
-      skillsUrl: ROUTER_CORPUS,
+    const data = await routeViaGhModels({
+      task:  state.full.slice(0, 500),
+      limit: 5,
     });
     skills = (data.skills || []).slice(0, 5);
   } catch (e) {
-    console.warn('[lens] router import/route failed', e);
+    console.warn('[lens] GH Models route failed', e);
+    setHint('routing failed: ' + (e.message || e), COL_HINT);
+    state.routeBusy = false;
+    state.phase = 'answer';
+    state.route.visible = true;
+    return;
   }
-  if (!skills.length) skills = FALLBACK_SKILLS;
+
+  if (!skills.length) {
+    setHint('LLM produced no candidates — try a different prompt', COL_HINT);
+    state.routeBusy = false;
+    state.phase = 'answer';
+    state.route.visible = true;
+    return;
+  }
   spawnOrbit(skills);
   state.routeBusy = false;
 }
@@ -1250,6 +1270,29 @@ async function runCapabilityChecks() {
   await runCapabilityChecks();
   if (beginBtn) beginBtn.disabled = false;
   if (skipBtn)  skipBtn.hidden = false;
+
+  // GH Models PAT input — drives fresh-skill generation in routeAndOrbit.
+  const ghTokenInput  = document.getElementById('ghTokenInput');
+  const ghTokenSave   = document.getElementById('ghTokenSave');
+  const ghTokenClear  = document.getElementById('ghTokenClear');
+  const ghTokenStatus = document.getElementById('ghTokenStatus');
+  const refreshGhTokenStatus = () => {
+    if (!ghTokenStatus) return;
+    if (hasGhToken()) ghTokenStatus.textContent = '✓ stored on this device';
+    else ghTokenStatus.textContent = '(missing — Find Skills will fail)';
+  };
+  refreshGhTokenStatus();
+  if (hasGhToken() && ghTokenInput) ghTokenInput.placeholder = '••• stored •••';
+  if (ghTokenSave) ghTokenSave.addEventListener('click', () => {
+    setGhToken((ghTokenInput?.value || '').trim());
+    if (ghTokenInput) ghTokenInput.value = '';
+    refreshGhTokenStatus();
+  });
+  if (ghTokenClear) ghTokenClear.addEventListener('click', () => {
+    setGhToken('');
+    if (ghTokenInput) ghTokenInput.value = '';
+    refreshGhTokenStatus();
+  });
 
   // Hand the VR button over only after the user has either downloaded the
   // VLM or explicitly skipped it. Mirrors the gate's existing copy.
