@@ -12,7 +12,8 @@
 // Replaces an earlier path that called GitHub Models directly with
 // a user-pasted PAT. Routing through the MCP keeps lens credential-free.
 
-const ROUTE_ENDPOINT = 'https://mcp.ask-meridian.uk/v1/route'
+const ROUTE_ENDPOINT    = 'https://mcp.ask-meridian.uk/v1/route'
+const FEEDBACK_ENDPOINT = 'https://mcp.ask-meridian.uk/v1/feedback'
 const TIMEOUT_MS = 60_000
 
 export async function route({ task, limit = 5, signal } = {}) {
@@ -49,5 +50,31 @@ export async function route({ task, limit = 5, signal } = {}) {
     confidence:  body.confidence || (top_score >= 30 ? 'strong' : top_score >= 8 ? 'moderate' : 'weak'),
     candidates_generated: body.candidates_generated ?? skills.length,
     classifier:  'meridian-mcp@cf-worker',
+  }
+}
+
+// Fire-and-forget feedback POST. The worker uses these to drive
+// online SGD on the fitted-correction layer that sits on top of the
+// orbital classifier — so user engagements (planet clicks, detail
+// opens) gradually nudge the ranking toward what users actually pick.
+//
+// Never throws or blocks the UI. Failures are logged at warn level
+// and dropped — feedback is best-effort by design.
+export function sendFeedback({ task, skills, chosenSlug, action = 'click' }) {
+  if (!task || !Array.isArray(skills) || !chosenSlug) return
+  try {
+    fetch(FEEDBACK_ENDPOINT, {
+      method:  'POST',
+      headers: { 'content-type': 'application/json' },
+      body:    JSON.stringify({
+        query:        task,
+        selected:     skills,
+        chosen_slug:  chosenSlug,
+        action,
+      }),
+      keepalive: true,    // survives page unload — feedback often fires on navigation
+    }).catch(e => console.warn('[meridian-route] feedback failed:', e?.message || e))
+  } catch (e) {
+    console.warn('[meridian-route] feedback fire failed:', e?.message || e)
   }
 }

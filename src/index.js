@@ -23,7 +23,7 @@ import gsap from 'gsap';
 // URLs for every module — Safari's disk cache can't serve stale code.
 import { init } from './init.js?v=__BUILD_SHA__';
 import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady, requestPersistentStorage } from './vlm.mjs?v=__BUILD_SHA__';
-import { route as routeViaMeridian } from './meridian-route.mjs?v=__BUILD_SHA__';
+import { route as routeViaMeridian, sendFeedback } from './meridian-route.mjs?v=__BUILD_SHA__';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
 // a scratch Color so we can call .setHex() once instead of allocating per tween.
@@ -255,6 +255,11 @@ const state = {
   physicsPanel: null,    // right-side hover info card
   detail:   null,        // { group, closeMesh }
   anchorStar: null,      // { group, core, halo1, halo2 } — body the orbits center on
+  // The most recent /v1/route batch — kept verbatim (raw classifier
+  // output, not the simplified spawnOrbit shape) so we can POST
+  // /v1/feedback when the user engages a planet. Set in routeAndOrbit
+  // and DEMO_SKILLS-skipping pieces of the flow.
+  lastRoutingBatch: null, // { task: string, skills: classifier_output[] }
   selected: null,
   full:     '',
   shown:    0,
@@ -1088,12 +1093,16 @@ async function routeAndOrbit() {
   setHint('routing via Meridian MCP · Llama-3.3-70B + orbital classifier…', COL_TEXT_H);
 
   let skills = [];
+  const taskForBatch = state.full.slice(0, 500);
   try {
     const data = await routeViaMeridian({
-      task:  state.full.slice(0, 500),
+      task:  taskForBatch,
       limit: 5,
     });
     skills = (data.skills || []).slice(0, 5);
+    // Cache the raw classifier output so /v1/feedback can replay the
+    // exact (query, candidates) tuple when the user clicks a planet.
+    state.lastRoutingBatch = { task: taskForBatch, skills };
   } catch (e) {
     console.warn('[lens] Meridian MCP route failed', e);
     setHint('routing failed: ' + (e.message || e), COL_HINT);
@@ -1336,6 +1345,18 @@ function handleClick(panel) {
   } else if (k === 'route' && state.phase === 'answer') {
     routeAndOrbit();
   } else if (k === 'planet' && (state.phase === 'orbit' || state.phase === 'detail')) {
+    // Implicit positive label: the user picked this skill from the
+    // orbit. Fire-and-forget POST to /v1/feedback so the worker's
+    // online SGD trains on it.
+    const batch = state.lastRoutingBatch;
+    if (batch) {
+      sendFeedback({
+        task:       batch.task,
+        skills:     batch.skills,
+        chosenSlug: panel.userData.skill?.id || panel.userData.skill?.slug,
+        action:     'detail_open',
+      });
+    }
     showDetail(panel.userData.skill);
   } else if (k === 'close' && state.phase === 'detail') {
     closeDetail();
