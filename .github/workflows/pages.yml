@@ -37,13 +37,15 @@ jobs:
           # files for their relative imports. Each commit becomes a
           # fresh set of URLs across the bundle so no Safari disk-cache
           # entry from an earlier commit can survive.
-          for f in src/index.html src/index.js src/gh-models.mjs src/orbital.mjs; do
+          # Classification now happens server-side in the Meridian MCP
+          # (mcp.ask-meridian.uk/v1/route) — orbital.mjs / systems.mjs /
+          # tokenize.mjs were deleted, so they don't appear in this list.
+          for f in src/index.html src/index.js src/meridian-route.mjs; do
             sed -i "s|__BUILD_SHA__|${sha}|g" "$f"
           done
           grep -q "index.js?v=${sha}" src/index.html
           grep -q "vlm.mjs?v=${sha}" src/index.js
-          grep -q "orbital.mjs?v=${sha}" src/gh-models.mjs
-          grep -q "tokenize.mjs?v=${sha}" src/orbital.mjs
+          grep -q "meridian-route.mjs?v=${sha}" src/index.js
           echo "✓ all asset URLs at ${sha}"
 
       - uses: actions/configure-pages@v5
