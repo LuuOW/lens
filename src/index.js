@@ -22,7 +22,7 @@ import gsap from 'gsap';
 // (see .github/workflows/pages.yml) so each push produces brand-new
 // URLs for every module — Safari's disk cache can't serve stale code.
 import { init } from './init.js?v=__BUILD_SHA__';
-import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs?v=__BUILD_SHA__';
+import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady, requestPersistentStorage } from './vlm.mjs?v=__BUILD_SHA__';
 import { route as routeViaMeridian } from './meridian-route.mjs?v=__BUILD_SHA__';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
@@ -1573,7 +1573,19 @@ async function runCapabilityChecks() {
 
   let opfs = false
   try { opfs = !!(navigator.storage && await navigator.storage.getDirectory()) } catch {}
-  set('cap-opfs', opfs, opfs ? 'OPFS · model cached after first load' : 'OPFS · model re-downloads each visit')
+  // Persistent-storage state determines whether OPFS survives eviction.
+  // Without it, the model is best-effort and the browser can drop it any
+  // time it wants disk space — that's the real "I keep re-downloading"
+  // failure mode. After Begin is clicked we request persistence and the
+  // status flips to ✓.
+  let persisted = false
+  try { persisted = !!(navigator.storage?.persisted && await navigator.storage.persisted()) } catch {}
+  const opfsLabel = !opfs
+    ? 'OPFS · model re-downloads each visit'
+    : persisted
+      ? 'OPFS · persistent · model survives eviction'
+      : 'OPFS · best-effort · click Begin to request persistence'
+  set('cap-opfs', opfs, opfsLabel)
 
   return { xr, gpu, opfs }
 }
@@ -1619,6 +1631,16 @@ async function runCapabilityChecks() {
     beginBtn.addEventListener('click', async () => {
       beginBtn.disabled = true;
       beginBtn.textContent = '… loading';
+      // Ask the browser to mark site storage as persistent BEFORE the
+      // model download starts. Without this, the 250 MB OPFS-cached
+      // weights are best-effort and the browser evicts them under
+      // disk pressure — the actual root cause of "why am I re-downloading
+      // SmolVLM?" Must run on this user-gesture (the click) for Firefox
+      // to even prompt; Chrome grants heuristically.
+      try {
+        const persist = await requestPersistentStorage();
+        console.info('[lens] persistent storage:', persist);
+      } catch (e) { console.warn('[lens] persist() failed:', e); }
       try {
         await loadVlm({
           onProgress: (frac, file) => {

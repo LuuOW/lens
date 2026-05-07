@@ -94,6 +94,25 @@ async function ensureFreshCache() {
   }
 }
 
+// Request persistent site storage. Without this, OPFS / Cache Storage /
+// IndexedDB are "best-effort" and the browser evicts the 250 MB
+// SmolVLM weights whenever it feels disk pressure — which is exactly
+// the re-download symptom users hit on return visits. Idempotent;
+// Chrome grants based on heuristics, Firefox prompts, Safari ignores.
+// Must run on a user gesture in some browsers, so the caller wires
+// this up to the Begin button click in index.js.
+export async function requestPersistentStorage() {
+  if (!navigator.storage?.persist) return { supported: false, persisted: false };
+  try {
+    const already = await navigator.storage.persisted?.();
+    if (already) return { supported: true, persisted: true, already: true };
+    const granted = await navigator.storage.persist();
+    return { supported: true, persisted: !!granted };
+  } catch (e) {
+    return { supported: true, persisted: false, error: String(e) };
+  }
+}
+
 // ── Model load ─────────────────────────────────────────────────────────
 // Concurrent calls share one promise. progress_callback is fed both files
 // and percentages — we surface the most recent file's progress so the
