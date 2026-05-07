@@ -1,7 +1,7 @@
 // Lens — step 4: end-to-end click flow.
 //
 // IDLE  → preset click → THINKING (streamed mock answer) → ANSWER
-// ANSWER → "Find skills" → ROUTING → ORBIT (in-browser via meridian's _lib/router.mjs)
+// ANSWER → "Find skills" → ROUTING → ORBIT (POST mcp.ask-meridian.uk/v1/route → real classifier)
 // ORBIT  → planet click → DETAIL → close → ORBIT
 // any state: left-controller squeeze → IDLE
 //
@@ -80,15 +80,6 @@ const NAV_W      = 0.70;
 const NAV_H      = 0.13;
 // NAV_X / NAV_Z derived from ARC_RADIUS — defined further down to
 // preserve declaration order (TDZ).
-
-const FALLBACK_SKILLS = [
-  { id: 'orbital-route', name: 'orbital-route', class: 'planet',    score: 0.91, system: 'meridian-mcp', description: 'Route a free-form task to compatible skills via Llama-3.3-70B classification.' },
-  { id: 'vision-snap',   name: 'vision-snap',   class: 'asteroid',  score: 0.74, system: 'lens',         description: 'Capture the current scene and run a VLM query in-headset.' },
-  { id: 'skill-orbit',   name: 'skill-orbit',   class: 'trojan',    score: 0.62, system: 'meridian-mcp', description: 'Materialise matched skills as orbital planets around the anchor star.' },
-  { id: 'comet-router',  name: 'comet-router',  class: 'comet',     score: 0.55, system: 'meridian-mcp', description: 'Long-period high-eccentricity router for rare-task coverage.' },
-  { id: 'moon-cache',    name: 'moon-cache',    class: 'moon',      score: 0.48, system: 'lens',         description: 'Lightweight skill that satellites a parent skill (here: orbits the planet).' },
-  { id: 'irregular-fx',  name: 'irregular-fx',  class: 'irregular', score: 0.41, system: 'meridian-mcp', description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
-];
 
 // Demo mode — six curated skills, one per class. Independent of any LLM
 // response so a recording always shows every orbital signature. Each
@@ -457,7 +448,7 @@ function makePlanet(skill, i, n) {
     : classExtras;
   const radius = 0.06 + score * 0.08;
   // Per-skill colour from star_affinity if the classifier supplied one,
-  // otherwise the legacy index-rotating palette (FALLBACK_SKILLS path).
+  // otherwise the legacy index-rotating palette (DEMO_SKILLS path).
   const affColor = colorFromAffinity(skill.star_affinity);
   const color = affColor ? affColor.getHex() : COL_PLANETS[i % COL_PLANETS.length];
 
@@ -471,7 +462,7 @@ function makePlanet(skill, i, n) {
 
   // Use the classifier's deterministic mean_anomaly (slug-hashed) when
   // present so the same skill always materialises in the same orbital
-  // phase. Falls back to random for FALLBACK_SKILLS.
+  // phase. Falls back to random for DEMO_SKILLS (no classifier output).
   const M0 = o?.mean_anomaly ?? Math.random() * Math.PI * 2;
   const p0 = keplerPosition(elements, 0, M0);
   mesh.position.set(p0.x + ANCHOR_X, p0.y + ANCHOR_Y, p0.z + ANCHOR_Z);
@@ -1126,7 +1117,7 @@ async function routeAndOrbit() {
 function spawnOrbit(skills) {
   clearOrbit();
   // The MCP / GitHub-Models pipeline returns nested classification + route_score;
-  // FALLBACK_SKILLS is the flat demo shape with score in 0..1. Read both.
+  // DEMO_SKILLS is the flat demo shape with score in 0..1. Read both.
   // route_score is unbounded (≈0..200+), so normalize against the batch max
   // when it overflows the 0..1 visual range.
   const rawScores = skills.map(s => +s.route_score || +s.score || +s.match || 0);
@@ -1143,7 +1134,7 @@ function spawnOrbit(skills) {
       description: raw.description || raw.summary || raw.body || '',
       // Preserve the classifier's per-skill orbital elements so the
       // visualization shows the actual physics it computed instead of a
-      // class lookup table. Falls back to undefined for FALLBACK_SKILLS,
+      // class lookup table. Falls back to undefined for DEMO_SKILLS,
       // which keeps the classElements() lookup as a default.
       orbital: raw.classification?.physics?.orbital,
       // Star-system affinity drives the planet's hue (blend of the three

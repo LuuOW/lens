@@ -30,5 +30,13 @@ development; not part of the deploy.
 
 ## API dependency
 
-The app POSTs to `MERIDIAN_API` (defined in `src/index.js`) for skill
-routing. Update that URL when the meridian backend moves.
+The app POSTs to `https://mcp.ask-meridian.uk/v1/route` (the live
+Meridian MCP's first-party browser endpoint) for skill routing. The
+endpoint is operator-paid (the GitHub PAT lives in a Cloudflare Worker
+secret), Origin-restricted to `lens.ask-meridian.uk` + sister
+sub-properties, and returns the full classifier output (per-skill
+celestial class + physics signature + decision rule) so the orbits
+render with real parameters instead of cosmetic ones.
+
+The endpoint URL is in `src/meridian-route.mjs`. SmolVLM inference
+remains fully on-device — only the routing call leaves the browser.
