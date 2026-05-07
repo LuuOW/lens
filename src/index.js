@@ -23,7 +23,7 @@ import gsap from 'gsap';
 // URLs for every module — Safari's disk cache can't serve stale code.
 import { init } from './init.js?v=__BUILD_SHA__';
 import { loadVlm, captureSceneFrame, captureCameraFrame, requestCamera, stopCamera, isCameraReady, describeImage, isVlmReady } from './vlm.mjs?v=__BUILD_SHA__';
-import { route as routeViaGhModels, hasToken as hasGhToken, setToken as setGhToken, getToken as getGhToken } from './gh-models.mjs?v=__BUILD_SHA__';
+import { route as routeViaMeridian } from './meridian-route.mjs?v=__BUILD_SHA__';
 
 // gsap on a THREE.Color animates its r/g/b numeric props directly. Pre-allocate
 // a scratch Color so we can call .setHex() once instead of allocating per tween.
@@ -84,7 +84,7 @@ const NAV_H      = 0.13;
 const FALLBACK_SKILLS = [
   { id: 'orbital-route', name: 'orbital-route', class: 'planet',    score: 0.91, system: 'meridian-mcp', description: 'Route a free-form task to compatible skills via Llama-3.3-70B classification.' },
   { id: 'vision-snap',   name: 'vision-snap',   class: 'asteroid',  score: 0.74, system: 'lens',         description: 'Capture the current scene and run a VLM query in-headset.' },
-  { id: 'skill-orbit',   name: 'skill-orbit',   class: 'trojan',    score: 0.62, system: 'meridian-mcp', description: 'Materialise matched skills as orbital planets around the user.' },
+  { id: 'skill-orbit',   name: 'skill-orbit',   class: 'trojan',    score: 0.62, system: 'meridian-mcp', description: 'Materialise matched skills as orbital planets around the anchor star.' },
   { id: 'comet-router',  name: 'comet-router',  class: 'comet',     score: 0.55, system: 'meridian-mcp', description: 'Long-period high-eccentricity router for rare-task coverage.' },
   { id: 'moon-cache',    name: 'moon-cache',    class: 'moon',      score: 0.48, system: 'lens',         description: 'Lightweight skill that satellites a parent skill (here: orbits the planet).' },
   { id: 'irregular-fx',  name: 'irregular-fx',  class: 'irregular', score: 0.41, system: 'meridian-mcp', description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
@@ -120,7 +120,8 @@ const DEMO_SKILLS = [
 
 // Orbital mechanics — each celestial class the meridian skill router emits gets a distinct
 // orbital character so the visualization shows the difference instead of N identical circles.
-// All orbits are centered at (0, ORBIT_Y, 0) (the user). y-axis is "up" in three.js.
+// All orbits are centered on the anchor star (ANCHOR_X, ANCHOR_Y, ANCHOR_Z) — see below.
+// y-axis is "up" in three.js.
 //                a (m) | e    | i (rad) | ω (rad)   | retrograde
 const ORBITAL_ELEMENTS = {
   planet:    { a: 2.0,  e: 0.05, i: 0.08,  omega: 0.0,         retrograde: false },
@@ -164,12 +165,12 @@ function keplerPosition(elements, t, M0) {
   return { x: x_op, y: y_op * si, z: y_op * ci };
 }
 
-// Skill routing now runs in-browser via meridian's edge router, loaded
-// cross-origin from its GitHub Pages site. ESM dynamic import + a static
-// _skills.json corpus replace the old POST to /api/orbital-route.
-const MERIDIAN_PAGES   = 'https://luuow.github.io/meridian-mcp';
-const ROUTER_MODULE    = `${MERIDIAN_PAGES}/_lib/router.mjs`;
-const ROUTER_CORPUS    = `${MERIDIAN_PAGES}/_skills.json`;
+// Skill routing calls the live Meridian MCP at mcp.ask-meridian.uk
+// — see ./meridian-route.mjs. The endpoint is operator-paid (the
+// GitHub PAT lives in a Cloudflare Worker secret), Origin-restricted
+// to lens.ask-meridian.uk, and returns the full classifier output so
+// spawnOrbit() can use real semi-major axis / eccentricity /
+// inclination per skill.
 
 const ARC_RADIUS    = 1.5;
 const CARD_Y        = 1.5;
@@ -198,6 +199,19 @@ const ROUTE_Y       = 1.20;     // below the preset arc (CARD_Y=1.5) and the ans
 const ROUTE_DIST    = -ARC_RADIUS;
 const ORBIT_RADIUS  = 2.0;
 const ORBIT_Y       = 1.55;
+
+// ── Anchor star ──────────────────────────────────────────────────────
+// Skills now orbit a real anchor star instead of riding around the
+// user's head. The star sits at azimuth +45° (front-right) and
+// elevation +45° (above eye line) at ANCHOR_DIST_M metres — both
+// values agree with the in-scene degree ring (axes=1) so it's easy
+// to verify visually.
+const ANCHOR_DIST_M = 4.0;
+const ANCHOR_AZ_RAD = Math.PI / 4;
+const ANCHOR_EL_RAD = Math.PI / 4;
+const ANCHOR_X = Math.sin(ANCHOR_AZ_RAD) * Math.cos(ANCHOR_EL_RAD) * ANCHOR_DIST_M;
+const ANCHOR_Y = ORBIT_Y + Math.sin(ANCHOR_EL_RAD) * ANCHOR_DIST_M;
+const ANCHOR_Z = -Math.cos(ANCHOR_AZ_RAD) * Math.cos(ANCHOR_EL_RAD) * ANCHOR_DIST_M;
 
 const COL_BG        = 0x07090f;
 const COL_PANEL     = 0x12182a;
@@ -249,6 +263,7 @@ const state = {
   starLayers: [],        // parallax + twinkle star Points groups
   physicsPanel: null,    // right-side hover info card
   detail:   null,        // { group, closeMesh }
+  anchorStar: null,      // { group, core, halo1, halo2 } — body the orbits center on
   selected: null,
   full:     '',
   shown:    0,
@@ -459,7 +474,7 @@ function makePlanet(skill, i, n) {
   // phase. Falls back to random for FALLBACK_SKILLS.
   const M0 = o?.mean_anomaly ?? Math.random() * Math.PI * 2;
   const p0 = keplerPosition(elements, 0, M0);
-  mesh.position.set(p0.x, p0.y + ORBIT_Y, p0.z);
+  mesh.position.set(p0.x + ANCHOR_X, p0.y + ANCHOR_Y, p0.z + ANCHOR_Z);
   mesh.userData = {
     kind: 'planet', skill, elements, M0, color, radius, cls,
   };
@@ -549,7 +564,7 @@ function makeOrbitRing(elements, color = 0x9bb6ea) {
     const x_op = x_p * cw - y_p * sw;
     const y_op = x_p * sw + y_p * cw;
     const ci = Math.cos(elements.i), si = Math.sin(elements.i);
-    pts.push(new THREE.Vector3(x_op, y_op * si + ORBIT_Y, y_op * ci));
+    pts.push(new THREE.Vector3(x_op + ANCHOR_X, y_op * si + ANCHOR_Y, y_op * ci + ANCHOR_Z));
   }
   const geom = new THREE.BufferGeometry().setFromPoints(pts);
   return new THREE.Line(geom, new THREE.LineBasicMaterial({
@@ -721,6 +736,48 @@ function makeNavLink(item, i) {
   return group;
 }
 
+// Anchor star — the body all the orbits center on. Visually it's a
+// glowing yellow sphere with a soft halo and a PointLight so planets
+// pick up real Lambertian shading when they swing close. Sits at
+// (ANCHOR_X, ANCHOR_Y, ANCHOR_Z) — matches the values used by
+// makePlanet / makeOrbitRing / onFrame so the orbits actually loop
+// around it.
+function makeAnchorStar() {
+  const group = new THREE.Group();
+  group.position.set(ANCHOR_X, ANCHOR_Y, ANCHOR_Z);
+
+  const core = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.22, 2),
+    new THREE.MeshBasicMaterial({ color: 0xfff3c4, transparent: true, opacity: 1.0 }),
+  );
+  group.add(core);
+
+  // Two additive halo shells so the star reads as luminous rather than
+  // a flat sphere, even before bloom passes.
+  const halo1 = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.34, 2),
+    new THREE.MeshBasicMaterial({
+      color: 0xffd56b, transparent: true, opacity: 0.35,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  group.add(halo1);
+  const halo2 = new THREE.Mesh(
+    new THREE.IcosahedronGeometry(0.55, 2),
+    new THREE.MeshBasicMaterial({
+      color: 0xffa276, transparent: true, opacity: 0.16,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }),
+  );
+  group.add(halo2);
+
+  const point = new THREE.PointLight(0xfff0c2, 1.6, 14, 1.4);
+  group.add(point);
+
+  group.userData = { kind: 'anchor-star', core, halo1, halo2 };
+  return group;
+}
+
 function makeLaser() {
   const geom = new THREE.BufferGeometry().setFromPoints([
     new THREE.Vector3(0, 0, 0),
@@ -814,6 +871,12 @@ function setupScene({ scene, renderer, player }) {
   }
 
   scene.add(new THREE.GridHelper(20, 20, 0x223052, 0x1a2438));
+
+  // Anchor star — the body the spawned skills orbit. Pinned in world
+  // space so the user can move around the orbit instead of dragging
+  // it with their head.
+  state.anchorStar = makeAnchorStar();
+  scene.add(state.anchorStar);
 
   // ── Axis + degree reference (debug-only, toggle via ?axes=0) ────────
   // Visible XYZ axes at world origin and a degree ring on the cards'
@@ -1031,25 +1094,17 @@ async function routeAndOrbit() {
   state.phase = 'routing';
   state.route.visible = false;
 
-  if (!hasGhToken()) {
-    setHint('Set a GitHub PAT (Models: read) at the gate to route skills', COL_HINT);
-    state.routeBusy = false;
-    state.phase = 'answer';
-    state.route.visible = true;
-    return;
-  }
-
-  setHint('Llama-3.3-70B authoring fresh skills via GitHub Models…', COL_TEXT_H);
+  setHint('routing via Meridian MCP · Llama-3.3-70B + orbital classifier…', COL_TEXT_H);
 
   let skills = [];
   try {
-    const data = await routeViaGhModels({
+    const data = await routeViaMeridian({
       task:  state.full.slice(0, 500),
       limit: 5,
     });
     skills = (data.skills || []).slice(0, 5);
   } catch (e) {
-    console.warn('[lens] GH Models route failed', e);
+    console.warn('[lens] Meridian MCP route failed', e);
     setHint('routing failed: ' + (e.message || e), COL_HINT);
     state.routeBusy = false;
     state.phase = 'answer';
@@ -1129,7 +1184,7 @@ function spawnOrbit(skills) {
 
   // Post-pass: lock trojans to their parent at Lagrange L4 (same orbit,
   // 60° lead in mean anomaly), and mark moons to orbit their parent's
-  // current position rather than the user origin. The classifier already
+  // current position rather than the anchor star. The classifier already
   // identified parents via Jaccard similarity (orbital.mjs:165–176);
   // we just consume that here.
   const planetBySlug = new Map();
@@ -1416,7 +1471,7 @@ function onFrame(delta, _time, { controllers, camera }) {
       const local = keplerPosition(p.userData.elements, tNow, p.userData.M0);
       const parentRef = p.userData.parentRef;
       if (p.userData.cls === 'moon' && parentRef) {
-        // Moon orbits its parent's CURRENT position, not the user origin.
+        // Moon orbits its parent's CURRENT position, not the anchor star.
         // The parent has already had its position written this frame
         // because state.orbit is iterated in spawn order and moons come
         // after their parents in our routing data — but to be safe across
@@ -1427,7 +1482,7 @@ function onFrame(delta, _time, { controllers, camera }) {
           parentRef.position.z + local.z,
         );
       } else {
-        p.position.set(local.x, local.y + ORBIT_Y, local.z);
+        p.position.set(local.x + ANCHOR_X, local.y + ANCHOR_Y, local.z + ANCHOR_Z);
       }
       p.userData.label?.lookAt(cam);
     });
@@ -1534,28 +1589,11 @@ async function runCapabilityChecks() {
   if (beginBtn) beginBtn.disabled = false;
   if (skipBtn)  skipBtn.hidden = false;
 
-  // GH Models PAT input — drives fresh-skill generation in routeAndOrbit.
-  const ghTokenInput  = document.getElementById('ghTokenInput');
-  const ghTokenSave   = document.getElementById('ghTokenSave');
-  const ghTokenClear  = document.getElementById('ghTokenClear');
-  const ghTokenStatus = document.getElementById('ghTokenStatus');
-  const refreshGhTokenStatus = () => {
-    if (!ghTokenStatus) return;
-    if (hasGhToken()) ghTokenStatus.textContent = '✓ stored on this device';
-    else ghTokenStatus.textContent = '(missing — Find Skills will fail)';
-  };
-  refreshGhTokenStatus();
-  if (hasGhToken() && ghTokenInput) ghTokenInput.placeholder = '••• stored •••';
-  if (ghTokenSave) ghTokenSave.addEventListener('click', () => {
-    setGhToken((ghTokenInput?.value || '').trim());
-    if (ghTokenInput) ghTokenInput.value = '';
-    refreshGhTokenStatus();
-  });
-  if (ghTokenClear) ghTokenClear.addEventListener('click', () => {
-    setGhToken('');
-    if (ghTokenInput) ghTokenInput.value = '';
-    refreshGhTokenStatus();
-  });
+  // One-time PAT-cleanup — older lens builds stashed a GitHub PAT in
+  // localStorage to call GitHub Models directly. Routing now goes
+  // through the operator-paid MCP, so any leftover token is dead
+  // weight and we wipe it on first load.
+  try { localStorage.removeItem('lens.github_token'); } catch {}
 
   // Hand the VR button over only after the user has either downloaded the
   // VLM or explicitly skipped it. Mirrors the gate's existing copy.

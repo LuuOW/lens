@@ -289,7 +289,7 @@
           <summary><span class="m-nav-section">Resources</span></summary>
           <a href="https://ask-meridian.uk/#products">Products</a>
           <a href="https://ask-meridian.uk/blog/">Blog</a>
-          <a href="https://docs.ask-meridian.uk">Docs</a>
+          <a href="https://ask-meridian.uk/docs/">Docs</a>
           <a href="https://ask-meridian.uk/#pricing">Pricing</a>
         </details>
 
@@ -327,8 +327,9 @@
       <p class="lead">
         Point at a glyph in your headset, pull the trigger, and a
         <strong>vision-language model running on-device</strong> describes
-        what's in front of you. Compatible skills orbit you as planets.
-        Frames never leave the browser.
+        what's in front of you. Compatible skills orbit an anchored star
+        in your view, sized and tilted by their real classifier-supplied
+        orbital parameters. Frames never leave the browser.
       </p>
 
       <ul id="capList" class="cap-list">
@@ -350,24 +351,12 @@
         <button id="skipBtn" class="ghost" hidden>Skip model · enter VR with mock answers</button>
       </div>
 
-      <details id="ghTokenWrap" style="margin-top: 18px; font-size: 13px;">
-        <summary style="cursor: pointer; color: #9bb6ea; user-select: none;">
-          GitHub PAT for fresh skill generation
-          <span id="ghTokenStatus" style="color: #6a78a8; font-size: 11px; margin-left: 8px;"></span>
-        </summary>
-        <p style="margin: 10px 0 6px; color: #8a9bc4;">
-          "Find skills" calls Llama-3.3-70B via
-          <a href="https://github.com/marketplace/models" target="_blank" rel="noopener" style="color: #c4b5fd;">GitHub Models</a>
-          to author fresh skills per task. Needs a fine-grained PAT with
-          <strong>Models: read</strong>.
-          <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener" style="color: #c4b5fd;">→ generate one</a>
-        </p>
-        <div style="display: flex; gap: 8px; align-items: center;">
-          <input id="ghTokenInput" type="password" placeholder="github_pat_…" style="flex: 1; padding: 8px 12px; background: #0f1220; border: 1px solid #2a3550; border-radius: 6px; color: #ddd; font-family: inherit;">
-          <button id="ghTokenSave" type="button">Save</button>
-          <button id="ghTokenClear" type="button" class="ghost">Clear</button>
-        </div>
-      </details>
+      <p class="footnote" style="margin-top: 18px;">
+        <strong>Find skills</strong> routes via the
+        <a href="https://mcp.ask-meridian.uk" target="_blank" rel="noopener">Meridian MCP</a>
+        — no PAT, no setup. Llama-3.3-70B authors candidates and the
+        orbital classifier ranks them server-side.
+      </p>
 
       <p class="footnote">
         No bundler — modules load from <code>esm.sh</code> on first hit and

@@ -16,11 +16,83 @@ import {
 } from '@huggingface/transformers';
 
 const MODEL_ID = 'HuggingFaceTB/SmolVLM-256M-Instruct';
+// Bump when swapping the model or its quantization so cached weights
+// from previous versions get evicted on next visit instead of being
+// silently re-used. This is the *only* string anyone has to touch to
+// force a fresh download.
+const MODEL_VERSION = 'SmolVLM-256M-Instruct/fp16-q4@1';
 
 env.allowLocalModels = false;
 env.useBrowserCache  = true;
 
 let _modelPromise = null;
+
+// ── Cache version pin (IDB) ─────────────────────────────────────────
+// transformers.js + the SW already give us a stable cache key (the
+// huggingface.co URL → Cache Storage entry). What's missing is a
+// version check: if MODEL_VERSION changes we want to drop the stale
+// weights so users don't run an outdated checkpoint forever. Persist
+// the active version in IndexedDB and evict matching cache entries
+// on mismatch.
+
+const IDB_NAME    = 'lens-vlm';
+const IDB_STORE   = 'meta';
+const VERSION_KEY = 'modelVersion';
+
+function openIdb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(IDB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(IDB_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror   = () => reject(req.error);
+  });
+}
+
+function idbRun(mode, fn) {
+  return openIdb().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE, mode);
+    const store = tx.objectStore(IDB_STORE);
+    let result;
+    try { result = fn(store); } catch (e) { db.close(); reject(e); return; }
+    tx.oncomplete = () => { db.close(); resolve(result?.result ?? result); };
+    tx.onerror    = () => { db.close(); reject(tx.error); };
+    tx.onabort    = () => { db.close(); reject(tx.error || new Error('aborted')); };
+  }));
+}
+
+async function evictModelCache(modelId) {
+  if (typeof caches === 'undefined') return 0;
+  const slug = modelId.split('/').pop();
+  let evicted = 0;
+  const names = await caches.keys();
+  for (const name of names) {
+    const cache = await caches.open(name);
+    const reqs = await cache.keys();
+    for (const req of reqs) {
+      let url;
+      try { url = new URL(req.url); } catch { continue; }
+      if (!url.hostname.includes('huggingface.co')) continue;
+      if (!url.pathname.includes(slug)) continue;
+      if (await cache.delete(req)) evicted++;
+    }
+  }
+  return evicted;
+}
+
+async function ensureFreshCache() {
+  let stored = null;
+  try { stored = await idbRun('readonly', s => s.get(VERSION_KEY)); }
+  catch (e) { console.warn('[lens-vlm] IDB read failed:', e); }
+
+  if (stored && stored !== MODEL_VERSION) {
+    const n = await evictModelCache(MODEL_ID).catch(() => 0);
+    console.info(`[lens-vlm] model version ${stored} → ${MODEL_VERSION}, evicted ${n} cache entries`);
+  }
+  if (stored !== MODEL_VERSION) {
+    try { await idbRun('readwrite', s => s.put(MODEL_VERSION, VERSION_KEY)); }
+    catch (e) { console.warn('[lens-vlm] IDB write failed:', e); }
+  }
+}
 
 // ── Model load ─────────────────────────────────────────────────────────
 // Concurrent calls share one promise. progress_callback is fed both files
@@ -36,6 +108,10 @@ export function loadVlm({ onProgress, onStatus } = {}) {
   }
   _modelPromise = (async () => {
     onStatus?.('init')
+    // Evict stale cached weights *before* transformers.js issues any
+    // fetches — so the upcoming downloads either reuse the verified
+    // version's cache or do a clean re-download.
+    await ensureFreshCache()
     const useGpu = !!navigator.gpu
     const processor = await AutoProcessor.from_pretrained(MODEL_ID, {
       progress_callback: wrap(onProgress),

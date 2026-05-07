@@ -1,0 +1,53 @@
+// Skill routing for lens — calls the live Meridian MCP at
+// mcp.ask-meridian.uk via its first-party browser endpoint
+// (POST /v1/route). The endpoint is operator-pays: a single GitHub
+// PAT lives as a Cloudflare Worker secret, so the lens user never
+// pastes credentials. The endpoint is Origin-restricted server-side
+// (lens.ask-meridian.uk is allowlisted).
+//
+// Returns the same { task, selected, ... } shape the MCP tool emits,
+// so spawnOrbit() can keep consuming `selected[i].classification.physics.orbital`
+// to render real classifier-driven orbits.
+//
+// Replaces an earlier path that called GitHub Models directly with
+// a user-pasted PAT. Routing through the MCP keeps lens credential-free.
+
+const ROUTE_ENDPOINT = 'https://mcp.ask-meridian.uk/v1/route'
+const TIMEOUT_MS = 60_000
+
+export async function route({ task, limit = 5, signal } = {}) {
+  if (!task) throw new Error('task required')
+
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS)
+  const onAbort = () => ctrl.abort()
+  signal?.addEventListener?.('abort', onAbort)
+
+  let res
+  try {
+    res = await fetch(ROUTE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ task: String(task).slice(0, 800), limit }),
+      signal: ctrl.signal,
+    })
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener?.('abort', onAbort)
+  }
+
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(body.error || `Meridian MCP HTTP ${res.status}`)
+
+  const skills = body.selected || []
+  const top_score = body.top_score || skills[0]?.route_score || 0
+  return {
+    task:        body.task ?? task,
+    skills,
+    total:       body.candidates_generated ?? skills.length,
+    top_score,
+    confidence:  body.confidence || (top_score >= 30 ? 'strong' : top_score >= 8 ? 'moderate' : 'weak'),
+    candidates_generated: body.candidates_generated ?? skills.length,
+    classifier:  'meridian-mcp@cf-worker',
+  }
+}
