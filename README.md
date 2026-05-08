@@ -2,7 +2,7 @@
 
 WebXR Vision Lab — a Three.js immersive scene that pairs an in-browser VLM
 (SmolVLM / Moondream2 via transformers.js) with the meridian orbital-route
-skill router. Point at something in VR, snap, ask, see candidate skills
+orbital task router. Point at something in VR, snap, ask, see candidates
 arrange themselves in orbit.
 
 ## Hosting
@@ -31,10 +31,10 @@ development; not part of the deploy.
 ## API dependency
 
 The app POSTs to `https://mcp.ask-meridian.uk/v1/route` (the live
-Meridian MCP's first-party browser endpoint) for skill routing. The
+Meridian MCP's first-party browser endpoint) for task routing. The
 endpoint is operator-paid (the GitHub PAT lives in a Cloudflare Worker
 secret), Origin-restricted to `lens.ask-meridian.uk` + sister
-sub-properties, and returns the full classifier output (per-skill
+sub-properties, and returns the full classifier output (per-candidate
 celestial class + physics signature + decision rule) so the orbits
 render with real parameters instead of cosmetic ones.
 

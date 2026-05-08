@@ -1,4 +1,4 @@
-// Skill routing for lens — calls the live Meridian MCP at
+// Candidate routing for lens — calls the live Meridian MCP at
 // mcp.ask-meridian.uk via its first-party browser endpoint
 // (POST /v1/route). The endpoint is operator-pays: a single GitHub
 // PAT lives as a Cloudflare Worker secret, so the lens user never
@@ -40,15 +40,15 @@ export async function route({ task, limit = 5, signal } = {}) {
   const body = await res.json().catch(() => ({}))
   if (!res.ok) throw new Error(body.error || `Meridian MCP HTTP ${res.status}`)
 
-  const skills = body.selected || []
-  const top_score = body.top_score || skills[0]?.route_score || 0
+  const candidates = body.selected || []
+  const top_score = body.top_score || candidates[0]?.route_score || 0
   return {
     task:        body.task ?? task,
-    skills,
-    total:       body.candidates_generated ?? skills.length,
+    candidates,
+    total:       body.candidates_generated ?? candidates.length,
     top_score,
     confidence:  body.confidence || (top_score >= 30 ? 'strong' : top_score >= 8 ? 'moderate' : 'weak'),
-    candidates_generated: body.candidates_generated ?? skills.length,
+    candidates_generated: body.candidates_generated ?? candidates.length,
     classifier:  'meridian-mcp@cf-worker',
   }
 }
@@ -60,15 +60,15 @@ export async function route({ task, limit = 5, signal } = {}) {
 //
 // Never throws or blocks the UI. Failures are logged at warn level
 // and dropped — feedback is best-effort by design.
-export function sendFeedback({ task, skills, chosenSlug, action = 'click' }) {
-  if (!task || !Array.isArray(skills) || !chosenSlug) return
+export function sendFeedback({ task, candidates, chosenSlug, action = 'click' }) {
+  if (!task || !Array.isArray(candidates) || !chosenSlug) return
   try {
     fetch(FEEDBACK_ENDPOINT, {
       method:  'POST',
       headers: { 'content-type': 'application/json' },
       body:    JSON.stringify({
         query:        task,
-        selected:     skills,
+        selected:     candidates,
         chosen_slug:  chosenSlug,
         action,
       }),

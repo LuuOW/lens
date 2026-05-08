@@ -1,7 +1,7 @@
 // Lens — step 4: end-to-end click flow.
 //
 // IDLE  → preset click → THINKING (streamed mock answer) → ANSWER
-// ANSWER → "Find skills" → ROUTING → ORBIT (POST mcp.ask-meridian.uk/v1/route → real classifier)
+// ANSWER → "Find candidates" → ROUTING → ORBIT (POST mcp.ask-meridian.uk/v1/route → real classifier)
 // ORBIT  → planet click → DETAIL → close → ORBIT
 // any state: left-controller squeeze → IDLE
 //
@@ -46,7 +46,7 @@ const PRESETS = [
   { id: 'activity', label: 'Activity?',    prompt: 'What activity is happening here?' },
   { id: 'objects',  label: 'List objects', prompt: 'List the visible objects, comma-separated.' },
   { id: 'context',  label: 'Context',      prompt: 'Work, home, outdoor, public — which?' },
-  { id: 'skills',   label: 'Skill hint',   prompt: 'What skills would I need to act on this?' },
+  { id: 'candidates',   label: 'Candidate hint',   prompt: 'What candidates would I need to act on this?' },
 ];
 
 // Fallback strings used only if the VLM is unavailable (model not loaded
@@ -59,7 +59,7 @@ const MOCK_ANSWERS = {
   activity: 'Exploration of an in-headset interface; a controller is selecting a preset.',
   objects:  'panels, glyphs, a starfield, a translucent floor grid, controllers, a laser ray.',
   context:  'Virtual reality work session — interactive demo space.',
-  skills:   'Spatial UI navigation, ray-pick interaction, voice-to-prompt, controller haptics.',
+  candidates:   'Spatial UI navigation, ray-pick interaction, voice-to-prompt, controller haptics.',
 };
 
 // Cross-property nav, mirrored from the DOM burger menu so you can move
@@ -81,12 +81,12 @@ const NAV_H      = 0.13;
 // NAV_X / NAV_Z derived from ARC_RADIUS — defined further down to
 // preserve declaration order (TDZ).
 
-// Demo mode — six curated skills, one per class. Independent of any LLM
+// Demo mode — six curated candidates, one per class. Independent of any LLM
 // response so a recording always shows every orbital signature. Each
 // entry includes a `parent` slug (so the post-pass can lock trojans/moons
 // to it) and a `star_affinity` triple (so the planet's hue blends from
 // the three system colours).
-const DEMO_SKILLS = [
+const DEMO_CANDIDATES = [
   { id: 'demo-planet',    name: 'persona-research',     class: 'planet',    score: 0.91, system: 'meridian-mcp',
     star_affinity: { forge: 0.20, signal: 0.35, mind: 0.85 },
     description: 'Build a source base for a person-specific voice model from public material — find, score, de-noise.' },
@@ -109,7 +109,7 @@ const DEMO_SKILLS = [
     description: 'Out-of-plane retrograde companion — high inclination, opposite direction.' },
 ];
 
-// Orbital mechanics — each celestial class the meridian skill router emits gets a distinct
+// Orbital mechanics — each celestial class the meridian candidate router emits gets a distinct
 // orbital character so the visualization shows the difference instead of N identical circles.
 // All orbits are centered on the anchor star (ANCHOR_X, ANCHOR_Y, ANCHOR_Z) — see below.
 // y-axis is "up" in three.js.
@@ -156,12 +156,12 @@ function keplerPosition(elements, t, M0) {
   return { x: x_op, y: y_op * si, z: y_op * ci };
 }
 
-// Skill routing calls the live Meridian MCP at mcp.ask-meridian.uk
+// Candidate routing calls the live Meridian MCP at mcp.ask-meridian.uk
 // — see ./meridian-route.mjs. The endpoint is operator-paid (the
 // GitHub PAT lives in a Cloudflare Worker secret), Origin-restricted
 // to lens.ask-meridian.uk, and returns the full classifier output so
 // spawnOrbit() can use real semi-major axis / eccentricity /
-// inclination per skill.
+// inclination per candidate.
 
 const ARC_RADIUS    = 1.5;
 const CARD_Y        = 1.5;
@@ -192,7 +192,7 @@ const ORBIT_RADIUS  = 2.0;
 const ORBIT_Y       = 1.55;
 
 // ── Anchor star ──────────────────────────────────────────────────────
-// Skills now orbit a real anchor star instead of riding around the
+// Candidates now orbit a real anchor star instead of riding around the
 // user's head. The star sits at azimuth +45° (front-right) and
 // elevation +45° (above eye line) at ANCHOR_DIST_M metres — both
 // values agree with the in-scene degree ring (axes=1) so it's easy
@@ -214,7 +214,7 @@ const COL_HINT      = 0x6e87b8;
 const COL_PLANETS   = [0x6ec3f4, 0xffa276, 0xb592e0, 0x69e2c4, 0xf3d27a];
 
 // Star-system base colors. The orbital classifier returns a star_affinity
-// triple per skill; we blend these three colors weighted by it so each
+// triple per candidate; we blend these three colors weighted by it so each
 // planet's hue reflects the systems it actually orbits between.
 //   forge  = devops/backend  → cool blue
 //   signal = growth/marketing → magenta
@@ -258,8 +258,8 @@ const state = {
   // The most recent /v1/route batch — kept verbatim (raw classifier
   // output, not the simplified spawnOrbit shape) so we can POST
   // /v1/feedback when the user engages a planet. Set in routeAndOrbit
-  // and DEMO_SKILLS-skipping pieces of the flow.
-  lastRoutingBatch: null, // { task: string, skills: classifier_output[] }
+  // and DEMO_CANDIDATES-skipping pieces of the flow.
+  lastRoutingBatch: null, // { task: string, candidates: classifier_output[] }
   selected: null,
   full:     '',
   shown:    0,
@@ -356,7 +356,7 @@ function makeAnswerCard() {
 
 // Camera toggle button — front-centre, on the cards' arc, sitting below
 // the route button. No roll. Visually it stacks under the primary 'Find
-// skills' action so the user always finds it without head-turn:
+// candidates' action so the user always finds it without head-turn:
 //   answer card        y=1.85
 //   preset cards       y=1.50  (θ ∈ [-π/4, +π/4])
 //   route button       y=1.20  (θ=0)
@@ -415,7 +415,7 @@ function makeRouteButton() {
   panel.userData.kind = 'route';
   group.add(panel);
 
-  const text = makeText('Find skills →', { size: 0.05, color: COL_TEXT_H });
+  const text = makeText('Find candidates →', { size: 0.05, color: COL_TEXT_H });
   text.position.z = 0.002;
   text.sync();
   group.add(text);
@@ -428,20 +428,20 @@ function makeRouteButton() {
 
 // Map the classifier's a∈[1,7] (heavy/broad/independent → close orbit;
 // light/dependent → far) into the visualization's working range [0.7, 3.2]
-// so distinct skills get distinct rings without flying past the user's view.
+// so distinct candidates get distinct rings without flying past the user's view.
 function rescaleA(a_phys) {
   const a = Math.max(1, Math.min(7, a_phys));
   return 0.7 + ((a - 1) / 6) * (3.2 - 0.7);
 }
 
-function makePlanet(skill, i, n) {
-  const score = Math.max(0, Math.min(1, +skill.score || 0.5));
-  const cls   = skill.class || 'planet';
+function makePlanet(candidate, i, n) {
+  const score = Math.max(0, Math.min(1, +candidate.score || 0.5));
+  const cls   = candidate.class || 'planet';
   // Class table contributes only the dynamical hints the physics scalars
   // don't encode: argument of periapsis (60° trojan offset for Lagrange L4)
-  // and the retrograde flag for irregular skills.
+  // and the retrograde flag for irregular candidates.
   const classExtras = classElements(cls);
-  const o = skill.orbital;
+  const o = candidate.orbital;
   const elements = o
     ? {
         a:          rescaleA(o.semi_major_axis),
@@ -452,9 +452,9 @@ function makePlanet(skill, i, n) {
       }
     : classExtras;
   const radius = 0.06 + score * 0.08;
-  // Per-skill colour from star_affinity if the classifier supplied one,
-  // otherwise the legacy index-rotating palette (DEMO_SKILLS path).
-  const affColor = colorFromAffinity(skill.star_affinity);
+  // Per-candidate colour from star_affinity if the classifier supplied one,
+  // otherwise the legacy index-rotating palette (DEMO_CANDIDATES path).
+  const affColor = colorFromAffinity(candidate.star_affinity);
   const color = affColor ? affColor.getHex() : COL_PLANETS[i % COL_PLANETS.length];
 
   const mesh = new THREE.Mesh(
@@ -466,16 +466,16 @@ function makePlanet(skill, i, n) {
   );
 
   // Use the classifier's deterministic mean_anomaly (slug-hashed) when
-  // present so the same skill always materialises in the same orbital
-  // phase. Falls back to random for DEMO_SKILLS (no classifier output).
+  // present so the same candidate always materialises in the same orbital
+  // phase. Falls back to random for DEMO_CANDIDATES (no classifier output).
   const M0 = o?.mean_anomaly ?? Math.random() * Math.PI * 2;
   const p0 = keplerPosition(elements, 0, M0);
   mesh.position.set(p0.x + ANCHOR_X, p0.y + ANCHOR_Y, p0.z + ANCHOR_Z);
   mesh.userData = {
-    kind: 'planet', skill, elements, M0, color, radius, cls,
+    kind: 'planet', candidate, elements, M0, color, radius, cls,
   };
 
-  const label = makeText(`${skill.name}  ·  ${cls}`, { size: 0.032, color: 0xffffff });
+  const label = makeText(`${candidate.name}  ·  ${cls}`, { size: 0.032, color: 0xffffff });
   label.position.y = radius + 0.05;
   label.sync();
   mesh.add(label);
@@ -618,14 +618,14 @@ function makePhysicsPanel() {
   return group;
 }
 
-function updatePhysicsPanel(skill, elements) {
+function updatePhysicsPanel(candidate, elements) {
   const panel = state.physicsPanel;
   if (!panel) return;
-  const cls = skill.class || 'planet';
+  const cls = candidate.class || 'planet';
   const T = classPeriod(elements);
-  panel.userData.title.text = skill.name;
+  panel.userData.title.text = candidate.name;
   panel.userData.title.sync();
-  panel.userData.meta.text = `class: ${cls} · score ${(skill.score * 100).toFixed(0)}%`;
+  panel.userData.meta.text = `class: ${cls} · score ${(candidate.score * 100).toFixed(0)}%`;
   panel.userData.meta.sync();
   panel.userData.body.text =
     `a (semi-major)   ${elements.a.toFixed(2)} m\n` +
@@ -651,7 +651,7 @@ function hidePhysicsPanel() {
   if (idx >= 0) state.panels.splice(idx, 1);
 }
 
-function makeDetailCard(skill) {
+function makeDetailCard(candidate) {
   const group = new THREE.Group();
   const w = 0.95, h = 0.50;
   group.position.set(0, ANSWER_Y, ANSWER_DIST + 0.4);
@@ -662,21 +662,21 @@ function makeDetailCard(skill) {
   );
   group.add(panel);
 
-  const title = makeText(skill.name || 'skill', {
+  const title = makeText(candidate.name || 'candidate', {
     size: 0.045, color: COL_TEXT_H, anchorX: 'left', anchorY: 'top',
   });
   title.position.set(-w / 2 + 0.05, h / 2 - 0.05, 0.002);
   title.sync();
   group.add(title);
 
-  const meta = makeText(`${skill.system || 'unknown'}  ·  match ${(Math.max(0, Math.min(1, +skill.score || 0)) * 100).toFixed(0)}%`, {
+  const meta = makeText(`${candidate.system || 'unknown'}  ·  match ${(Math.max(0, Math.min(1, +candidate.score || 0)) * 100).toFixed(0)}%`, {
     size: 0.030, color: 0x9bb6ea, anchorX: 'left', anchorY: 'top',
   });
   meta.position.set(-w / 2 + 0.05, h / 2 - 0.12, 0.002);
   meta.sync();
   group.add(meta);
 
-  const body = makeText(skill.description || skill.summary || '(no description)', {
+  const body = makeText(candidate.description || candidate.summary || '(no description)', {
     size: 0.028, color: 0xe9eef7, anchorX: 'left', anchorY: 'top',
     maxWidth: w - 0.10,
   });
@@ -868,7 +868,7 @@ function setupScene({ scene, renderer, player }) {
 
   scene.add(new THREE.GridHelper(20, 20, 0x223052, 0x1a2438));
 
-  // Anchor star — the body the spawned skills orbit. Pinned in world
+  // Anchor star — the body the spawned candidates orbit. Pinned in world
   // space so the user can move around the orbit instead of dragging
   // it with their head.
   state.anchorStar = makeAnchorStar();
@@ -1054,7 +1054,7 @@ async function runVlmInference(preset) {
 
   state.phase = 'answer';
   state.route.visible = true;
-  setHint('aim "Find skills" or pick another preset', COL_TEXT);
+  setHint('aim "Find candidates" or pick another preset', COL_TEXT);
 }
 
 function runMockStream(preset) {
@@ -1080,7 +1080,7 @@ function streamTick() {
   if (state.shown >= state.full.length) {
     state.phase = 'answer';
     state.route.visible = true;
-    setHint('aim "Find skills" or pick another preset', COL_TEXT);
+    setHint('aim "Find candidates" or pick another preset', COL_TEXT);
   }
 }
 
@@ -1092,17 +1092,17 @@ async function routeAndOrbit() {
 
   setHint('routing via Meridian MCP · Llama-3.3-70B + orbital classifier…', COL_TEXT_H);
 
-  let skills = [];
+  let candidates = [];
   const taskForBatch = state.full.slice(0, 500);
   try {
     const data = await routeViaMeridian({
       task:  taskForBatch,
       limit: 5,
     });
-    skills = (data.skills || []).slice(0, 5);
+    candidates = (data.candidates || []).slice(0, 5);
     // Cache the raw classifier output so /v1/feedback can replay the
     // exact (query, candidates) tuple when the user clicks a planet.
-    state.lastRoutingBatch = { task: taskForBatch, skills };
+    state.lastRoutingBatch = { task: taskForBatch, candidates };
   } catch (e) {
     console.warn('[lens] Meridian MCP route failed', e);
     setHint('routing failed: ' + (e.message || e), COL_HINT);
@@ -1112,38 +1112,38 @@ async function routeAndOrbit() {
     return;
   }
 
-  if (!skills.length) {
+  if (!candidates.length) {
     setHint('LLM produced no candidates — try a different prompt', COL_HINT);
     state.routeBusy = false;
     state.phase = 'answer';
     state.route.visible = true;
     return;
   }
-  spawnOrbit(skills);
+  spawnOrbit(candidates);
   state.routeBusy = false;
 }
 
-function spawnOrbit(skills) {
+function spawnOrbit(candidates) {
   clearOrbit();
   // The MCP / GitHub-Models pipeline returns nested classification + route_score;
-  // DEMO_SKILLS is the flat demo shape with score in 0..1. Read both.
+  // DEMO_CANDIDATES is the flat demo shape with score in 0..1. Read both.
   // route_score is unbounded (≈0..200+), so normalize against the batch max
   // when it overflows the 0..1 visual range.
-  const rawScores = skills.map(s => +s.route_score || +s.score || +s.match || 0);
+  const rawScores = candidates.map(s => +s.route_score || +s.score || +s.match || 0);
   const maxRaw = Math.max(0.0001, ...rawScores);
   const needsNormalize = maxRaw > 1.5;
-  skills.forEach((raw, i) => {
+  candidates.forEach((raw, i) => {
     const rawScore = rawScores[i];
     const sk = {
       id: raw.id || raw.slug || `s-${i}`,
-      name: raw.name || raw.slug || raw.label || `skill-${i}`,
+      name: raw.name || raw.slug || raw.label || `candidate-${i}`,
       class: raw.classification?.class || raw.class || raw.cls || 'planet',
       score: needsNormalize ? rawScore / maxRaw : rawScore,
       system: raw.classification?.star_system || raw.system || raw.system_id || raw.provider || '',
       description: raw.description || raw.summary || raw.body || '',
-      // Preserve the classifier's per-skill orbital elements so the
+      // Preserve the classifier's per-candidate orbital elements so the
       // visualization shows the actual physics it computed instead of a
-      // class lookup table. Falls back to undefined for DEMO_SKILLS,
+      // class lookup table. Falls back to undefined for DEMO_CANDIDATES,
       // which keeps the classElements() lookup as a default.
       orbital: raw.classification?.physics?.orbital,
       // Star-system affinity drives the planet's hue (blend of the three
@@ -1152,7 +1152,7 @@ function spawnOrbit(skills) {
       star_affinity: raw.classification?.physics?.star_affinity,
       parent: raw.classification?.parent || raw.parent || null,
     };
-    const planet = makePlanet(sk, i, skills.length);
+    const planet = makePlanet(sk, i, candidates.length);
     state.scene.add(planet);
     state.orbit.push(planet);
     state.panels.push(planet);
@@ -1188,10 +1188,10 @@ function spawnOrbit(skills) {
   // identified parents via Jaccard similarity (orbital.mjs:165–176);
   // we just consume that here.
   const planetBySlug = new Map();
-  state.orbit.forEach((p) => planetBySlug.set(p.userData.skill.id, p));
+  state.orbit.forEach((p) => planetBySlug.set(p.userData.candidate.id, p));
 
   state.orbit.forEach((p, idx) => {
-    const parentSlug = p.userData.skill.parent;
+    const parentSlug = p.userData.candidate.parent;
     if (!parentSlug) return;
     const parent = planetBySlug.get(parentSlug);
     if (!parent || parent === p) return;
@@ -1243,12 +1243,12 @@ function spawnOrbit(skills) {
   setHint('aim a planet to inspect orbital elements', COL_TEXT);
 }
 
-function spawnDemoSkills() {
+function spawnDemoCandidates() {
   closeDetail();
   state.answer.visible = false;
   state.route.visible = false;
-  spawnOrbit(DEMO_SKILLS);
-  setHint('demo · one curated skill per class', COL_TEXT);
+  spawnOrbit(DEMO_CANDIDATES);
+  setHint('demo · one curated candidate per class', COL_TEXT);
 }
 
 function clearOrbit() {
@@ -1286,9 +1286,9 @@ function clearOrbit() {
   hidePhysicsPanel();
 }
 
-function showDetail(skill) {
+function showDetail(candidate) {
   closeDetail();
-  const card = makeDetailCard(skill);
+  const card = makeDetailCard(candidate);
   state.scene.add(card);
   state.detail = { group: card, closeMesh: card.userData.closeMesh };
   state.panels.push(card.userData.closeMesh);
@@ -1345,19 +1345,19 @@ function handleClick(panel) {
   } else if (k === 'route' && state.phase === 'answer') {
     routeAndOrbit();
   } else if (k === 'planet' && (state.phase === 'orbit' || state.phase === 'detail')) {
-    // Implicit positive label: the user picked this skill from the
+    // Implicit positive label: the user picked this candidate from the
     // orbit. Fire-and-forget POST to /v1/feedback so the worker's
     // online SGD trains on it.
     const batch = state.lastRoutingBatch;
     if (batch) {
       sendFeedback({
         task:       batch.task,
-        skills:     batch.skills,
-        chosenSlug: panel.userData.skill?.id || panel.userData.skill?.slug,
+        candidates:     batch.candidates,
+        chosenSlug: panel.userData.candidate?.id || panel.userData.candidate?.slug,
         action:     'detail_open',
       });
     }
-    showDetail(panel.userData.skill);
+    showDetail(panel.userData.candidate);
   } else if (k === 'close' && state.phase === 'detail') {
     closeDetail();
     state.phase = 'orbit';
@@ -1386,7 +1386,7 @@ function handleClick(panel) {
       // End the XR session so the DOM gate (and the burger menu) reappear.
       state.renderer?.xr?.getSession?.()?.end?.();
     } else if (url === '__demo__') {
-      spawnDemoSkills();
+      spawnDemoCandidates();
     } else if (url) {
       // Cross-property nav: ending the session first prevents Quest from
       // showing a stuck black frame as the new page loads.
@@ -1435,7 +1435,7 @@ function setHover(panel) {
     } else if (k === 'planet') {
       tweenEmissive(panel.material, 0.55);
       tweenScale(panel, 1.18, 0.22, 'back.out(2)');
-      updatePhysicsPanel(panel.userData.skill, panel.userData.elements);
+      updatePhysicsPanel(panel.userData.candidate, panel.userData.elements);
     }
   }
   state.hovered = panel;
